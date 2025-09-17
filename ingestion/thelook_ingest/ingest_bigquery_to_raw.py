@@ -43,7 +43,7 @@ import datetime, json, uuid
 from typing import Optional, List, Dict
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
-
+from pyspark.sql import SparkSession
 from .config import (
     get_project, get_bq_auth_options, get_bucket, get_raw_prefix, get_uc_catalog
 )
@@ -71,6 +71,7 @@ WRITE_PARTS = 32
 INCLUDE_NULLS_ON_FIRST_RUN = True
 
 # Recommended Spark settings (idempotent; set here for clarity)
+spark = SparkSession.builder.appName("thelook-bq-to-raw").getOrCreate()
 spark.conf.set("spark.sql.session.timeZone", "UTC")
 spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
 
