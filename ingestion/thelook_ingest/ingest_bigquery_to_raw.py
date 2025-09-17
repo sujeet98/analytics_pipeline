@@ -44,7 +44,7 @@ from typing import Optional, List, Dict
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
 
-from config import (
+from .config import (
     get_project, get_bq_auth_options, get_bucket, get_raw_prefix, get_uc_catalog
 )
 
