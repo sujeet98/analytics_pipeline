@@ -114,7 +114,7 @@ def _bq_table_id(table: str) -> str:
 def _uc_full_table(table: str) -> str:
     """Fully qualified UC table name we append to (external Parquet table)."""
     # We keep one schema named 'raw' inside the chosen UC catalog
-    return f"{UC_CATALOG}.raw_{table}"
+    return f"{UC_CATALOG}.raw.{table}"
 
 # ---- State I/O (cursor + cadence markers) ------------------------------------
 def _load_state_blob(table: str) -> Optional[dict]:
@@ -343,33 +343,64 @@ def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Opt
 # ------------------------------------------------------------------------------
 # MAIN INGEST LOOP
 # ------------------------------------------------------------------------------
-results = []
+def main():
+    results = []
 
-for table, cfg in TABLES.items():
-    change_cols      = cfg["change_cols"]
-    grace_minutes    = int(cfg.get("grace_minutes", 0) or 0)
-    is_dim           = cfg["is_dim"]
-    cadence_minutes  = int(cfg.get("run_every_minutes", 0) or 0)
+    for table, cfg in TABLES.items():
+        change_cols      = cfg["change_cols"]
+        grace_minutes    = int(cfg.get("grace_minutes", 0) or 0)
+        is_dim           = cfg["is_dim"]
+        cadence_minutes  = int(cfg.get("run_every_minutes", 0) or 0)
 
-    print(f"\n=== Ingesting: {table} ===")
+        print(f"\n=== Ingesting: {table} ===")
 
-    # 0) Per-table cadence gate: skip if not yet due
-    if not _is_due(table, cadence_minutes):
-        last = _get_last_run_utc(table)
-        mins_since = int((_now_utc() - last).total_seconds() / 60) if last else 0
-        print(f"{table}: skipped (cadence {cadence_minutes}m; last run {mins_since}m ago).")
-        results.append({"table": table, "status": "skipped_cadence",
-                        "cadence_min": cadence_minutes, "mins_since": mins_since})
-        continue
+        # 0) Per-table cadence gate: skip if not yet due
+        if not _is_due(table, cadence_minutes):
+            last = _get_last_run_utc(table)
+            mins_since = int((_now_utc() - last).total_seconds() / 60) if last else 0
+            print(f"{table}: skipped (cadence {cadence_minutes}m; last run {mins_since}m ago).")
+            results.append({"table": table, "status": "skipped_cadence",
+                            "cadence_min": cadence_minutes, "mins_since": mins_since})
+            continue
 
-    # A) Dims WITHOUT change columns → FULL SNAPSHOT when due
-    if is_dim and len(change_cols) == 0:
+        # A) Dims WITHOUT change columns → FULL SNAPSHOT when due
+        if is_dim and len(change_cols) == 0:
+            df = (
+                spark.read.format("bigquery")
+                .option("parentProject", PROJECT_ID)
+                .options(**BQ_AUTH)
+                .option("table", _bq_table_id(table))
+                .load()
+                # Add lineage & partition columns expected by UC table
+                .withColumn("ingest_date", F.lit(TODAY))
+                .withColumn("run_ts", F.lit(RUN_TS))
+                .withColumn("ingest_ts_utc", F.current_timestamp())
+                .withColumn("source_table", F.lit(table))
+            )
+
+            n = df.count()
+            if n == 0:
+                print(f"{table}: no rows (full snapshot).")
+                results.append({"table": table, "status": "no_data"})
+                mark_dim_snapshot(table, 0)  # still stamp last_run so cadence gating works
+                continue
+
+            dest = write_raw(df, table)
+            print(f"{table}: full snapshot wrote {n} rows → {dest}")
+            mark_dim_snapshot(table, n)
+            results.append({"table": table, "status": "ok_fullpull", "rows": n})
+            continue
+
+        # B) Facts or Dims WITH change columns → incremental micro-batch
+        cursor = load_cursor(table)  # (None if first run)
+
         df = (
-            spark.read.format("bigquery")
-            .option("parentProject", PROJECT_ID)
-            .options(**BQ_AUTH)
-            .option("table", _bq_table_id(table))
-            .load()
+            bq_read_filtered(
+                table=table,
+                change_cols=change_cols,
+                grace_minutes=grace_minutes,
+                cursor=cursor
+            )
             # Add lineage & partition columns expected by UC table
             .withColumn("ingest_date", F.lit(TODAY))
             .withColumn("run_ts", F.lit(RUN_TS))
@@ -377,72 +408,42 @@ for table, cfg in TABLES.items():
             .withColumn("source_table", F.lit(table))
         )
 
+        # Materialize & check emptiness (single action)
         n = df.count()
         if n == 0:
-            print(f"{table}: no rows (full snapshot).")
+            print(f"{table}: no new rows; cursor unchanged.")
+            # still stamp last_run to honor cadence even when empty runs occur
+            mark_dim_snapshot(table, 0) if is_dim else save_cursor(table, cursor or "1970-01-01 00:00:00+00", 0)
             results.append({"table": table, "status": "no_data"})
-            mark_dim_snapshot(table, 0)  # still stamp last_run so cadence gating works
             continue
 
+        # Write RAW via UC external table
         dest = write_raw(df, table)
-        print(f"{table}: full snapshot wrote {n} rows → {dest}")
-        mark_dim_snapshot(table, n)
-        results.append({"table": table, "status": "ok_fullpull", "rows": n})
-        continue
+        print(f"{table}: wrote {n} rows → {dest}")
 
-    # B) Facts or Dims WITH change columns → incremental micro-batch
-    cursor = load_cursor(table)  # (None if first run)
+        # Advance cursor — cap at "now" so saved cursor is never future-dated
+        max_str = compute_max_ts(df, change_cols, precomputed_count=n)
+        if max_str:
+            now_utc = _now_utc()
+            max_dt  = _parse_cursor_to_dt_utc(max_str)
+            capped  = min(max_dt, now_utc)
+            save_cursor(table, capped.strftime("%Y-%m-%d %H:%M:%S+00"), n)
+            print(f"{table}: cursor advanced to {capped.strftime('%Y-%m-%d %H:%M:%S+00')}")
+            results.append({"table": table, "status": "ok", "rows": n,
+                            "cursor": capped.strftime("%Y-%m-%d %H:%M:%S+00")})
+        else:
+            # No max change → still stamp last_run for cadence, without cursor move
+            save_cursor(table, cursor or "1970-01-01 00:00:00+00", n)
+            results.append({"table": table, "status": "ok_no_cursor", "rows": n})
 
-    df = (
-        bq_read_filtered(
-            table=table,
-            change_cols=change_cols,
-            grace_minutes=grace_minutes,
-            cursor=cursor
-        )
-        # Add lineage & partition columns expected by UC table
-        .withColumn("ingest_date", F.lit(TODAY))
-        .withColumn("run_ts", F.lit(RUN_TS))
-        .withColumn("ingest_ts_utc", F.current_timestamp())
-        .withColumn("source_table", F.lit(table))
-    )
+    # ------------------------------------------------------------------------------
+    # OPTIONAL: quick visibility check for today's partition in UC table
+    # ------------------------------------------------------------------------------
+    try:
+        users_tbl = _uc_full_table("users")
+        cnt = spark.table(users_tbl).where(F.col("ingest_date") == TODAY).count()
+        print(f"Users rows ingested today: {cnt} (table: {users_tbl})")
+    except Exception as e:
+        print(f"Visibility check error (non-fatal): {e}")
 
-    # Materialize & check emptiness (single action)
-    n = df.count()
-    if n == 0:
-        print(f"{table}: no new rows; cursor unchanged.")
-        # still stamp last_run to honor cadence even when empty runs occur
-        mark_dim_snapshot(table, 0) if is_dim else save_cursor(table, cursor or "1970-01-01 00:00:00+00", 0)
-        results.append({"table": table, "status": "no_data"})
-        continue
-
-    # Write RAW via UC external table
-    dest = write_raw(df, table)
-    print(f"{table}: wrote {n} rows → {dest}")
-
-    # Advance cursor — cap at "now" so saved cursor is never future-dated
-    max_str = compute_max_ts(df, change_cols, precomputed_count=n)
-    if max_str:
-        now_utc = _now_utc()
-        max_dt  = _parse_cursor_to_dt_utc(max_str)
-        capped  = min(max_dt, now_utc)
-        save_cursor(table, capped.strftime("%Y-%m-%d %H:%M:%S+00"), n)
-        print(f"{table}: cursor advanced to {capped.strftime('%Y-%m-%d %H:%M:%S+00')}")
-        results.append({"table": table, "status": "ok", "rows": n,
-                        "cursor": capped.strftime("%Y-%m-%d %H:%M:%S+00")})
-    else:
-        # No max change → still stamp last_run for cadence, without cursor move
-        save_cursor(table, cursor or "1970-01-01 00:00:00+00", n)
-        results.append({"table": table, "status": "ok_no_cursor", "rows": n})
-
-# ------------------------------------------------------------------------------
-# OPTIONAL: quick visibility check for today's partition in UC table
-# ------------------------------------------------------------------------------
-try:
-    users_tbl = _uc_full_table("users")
-    cnt = spark.table(users_tbl).where(F.col("ingest_date") == TODAY).count()
-    print(f"Users rows ingested today: {cnt} (table: {users_tbl})")
-except Exception as e:
-    print(f"Visibility check error (non-fatal): {e}")
-
-print("\nSummary:", results)
+    print("\nSummary:", results)
