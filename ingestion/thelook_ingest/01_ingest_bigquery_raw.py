@@ -1,4 +1,4 @@
-# 01_ingest_bigquery_raw_incremental_v10.py
+# 01_ingest_bigquery_raw_incremental_v10_uc.py
 #
 # ------------------------------------------------------------------------------
 # OVERVIEW
@@ -6,92 +6,98 @@
 # PURPOSE
 #   Incrementally ingest BigQuery public dataset
 #   `bigquery-public-data.thelook_ecommerce` into an immutable RAW layer on S3,
-#   using Databricks (AWS) with Unity Catalog Shared access mode.
+#   using Databricks (AWS) with Unity Catalog (UC).
 #
-# WHAT'S NEW IN v10 (simplified knobs)
-#   • Removed grace_days → only `grace_minutes` is used (minute-first everywhere).
-#   • Removed dim_snapshot_minutes → only `run_every_minutes` controls cadence
-#     (facts & dims). If a dim has no change columns, each due run is a full snapshot.
+# WRITING MODE (Option B - UC external tables)
+#   • Instead of writing directly to s3a:// paths, we append into UC external
+#     Parquet tables (one table per source table) that point at:
+#       s3://{BUCKET}/{RAW_PREFIX}/{table}
+#   • On the first write we auto-create the UC table (external, partitioned by
+#     (ingest_date, run_ts)); on subsequent runs we `insertInto` the table.
+#   • This routes S3 access through your **UC storage credential** (no instance
+#     profile on the cluster required) while preserving immutable partitions.
 #
-# OPERATING MODEL (simple & enterprise-friendly)
-#   • Schedule this script every 10 minutes (concurrency=1).
-#   • Each table self-skips unless `run_every_minutes` has elapsed since its last success.
-#   • Incremental reads use a protective `grace_minutes` window to catch late/backdated data.
-#   • RAW is append-only (date/run-stamped folders). Dedupe/merge/SCD happen later in dbt.
+# INCREMENTAL LOGIC (unchanged)
+#   • Per-table cadence gate: only run when the table’s `run_every_minutes` has
+#     elapsed since last success.
+#   • Lower bound (LB) = max(epoch, min(cursor, now) - grace_minutes).
+#   • Facts/dims WITH change columns filter rows using LB; dims WITHOUT change
+#     columns are full-snapshotted when due.
+#   • Cursor is advanced to the max observed change timestamp (capped at now).
 #
-# KNOBS YOU’LL ACTUALLY TUNE
-#   - TABLES[*].run_every_minutes  → per-table cadence (when to run)
-#   - TABLES[*].grace_minutes      → re-read window before cursor (how safely to run)
-#     Rule of thumb: grace_minutes ≈ 3×–6× cadence (e.g., 10-min cadence → 30–60 grace)
-#   - WRITE_PARTS                  → coalesce target (file size vs. count)
-#   - INCLUDE_NULLS_ON_FIRST_RUN   → include NULL change timestamps on the first load
+# KNOBS
+#   - TABLES[*].run_every_minutes  → when each table should run.
+#   - TABLES[*].grace_minutes      → how far to re-read for late/backdated rows.
+#   - WRITE_PARTS                  → coalesce target (# output files).
+#   - INCLUDE_NULLS_ON_FIRST_RUN   → include NULL change timestamps on first load.
+#
+# OPERATION
+#   • Schedule this job every 10 minutes (max concurrent runs = 1).
+#   • UC permissions required:
+#       - USE CATALOG on your UC catalog
+#       - USE/CREATE TABLE on the target schema
+#       - CREATE EXTERNAL TABLE on your External Location (e.g., raw_thelook)
 # ------------------------------------------------------------------------------
 
 import datetime, json, uuid
 from typing import Optional, List, Dict
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
-from thelook_ingest.config import (get_project, get_bq_auth_options, get_bucket, get_raw_prefix)
+
+from thelook_ingest.config import (
+    get_project, get_bq_auth_options, get_bucket, get_raw_prefix, get_uc_catalog
+)
 
 # ------------------------------------------------------------------------------
-# ENVIRONMENT (provided by ./00_config)
+# ENVIRONMENT
 # ------------------------------------------------------------------------------
-PROJECT_ID = get_project()                  # GCP project billed for BigQuery reads
-BQ_AUTH    = get_bq_auth_options()          # Spark–BigQuery connector auth dict
-BUCKET     = get_bucket()                   # Destination AWS S3 bucket
-RAW_PREFIX = get_raw_prefix()               # RAW prefix, e.g. "raw"
+PROJECT_ID = get_project()                 # GCP project billed for BigQuery reads
+BQ_AUTH    = get_bq_auth_options()         # Spark–BigQuery connector auth dict
+BUCKET     = get_bucket()                  # Destination S3 bucket (UC external location covers this)
+RAW_PREFIX = get_raw_prefix()              # e.g. "raw/thelook"
+UC_CATALOG = get_uc_catalog()              # e.g. "sujeet_data_analytics_workspace"
 
 # Global run metadata (UTC for reproducibility)
-TODAY  = datetime.date.today().isoformat()                                    # "YYYY-MM-DD"
-RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S")      # "HHMMSS" (UTC)
+TODAY  = datetime.date.today().isoformat()                               # "YYYY-MM-DD"
+RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S") # "HHMMSS" (UTC)
 
-# S3 paths (Spark/Hadoop connector uses s3a://)
-DEST_BASE    = f"s3a://{BUCKET}/{RAW_PREFIX}"
-STATE_PREFIX = f"s3a://{BUCKET}/{RAW_PREFIX}/_state"     # per-table JSON cursors / markers
+# State files remain in S3 (simple JSON per table)
+STATE_PREFIX = f"s3a://{BUCKET}/{RAW_PREFIX}/_state"
 
 # Output file sizing (coalesce reduces partitions; never increases)
 WRITE_PARTS = 32
 
 # Include NULL change timestamps on the very first run?
-# (Mimics COALESCE(col, epoch) >= LB when LB == epoch.)
 INCLUDE_NULLS_ON_FIRST_RUN = True
+
+# Recommended Spark settings (idempotent; set here for clarity)
+spark.conf.set("spark.sql.session.timeZone", "UTC")
+spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
 
 # ------------------------------------------------------------------------------
 # TABLE CONFIGURATION
-#   change_cols:       TIMESTAMP/DATETIME fields that signal creation/updates
-#   grace_minutes:     minutes to roll back the cursor (protect against late/backdated rows)
-#   run_every_minutes: per-table cadence gate (table self-skips if not due yet)
-#   is_dim:            True for dimension tables
-#
-# Notes:
-#   • Facts: 10–20 min cadence; set grace_minutes ≈ 30–90 (start at 60–90 for 10-min cadence).
-#   • Dims with NO change_cols: set cadence to how often you want a full snapshot
-#       (e.g., 360 = every 6 hours; 10080 = weekly).
-#   • Dims WITH change_cols: they behave like facts (incremental).
 # ------------------------------------------------------------------------------
 TABLES: Dict[str, Dict] = {
   # Facts (two cadence buckets for illustration)
-  "orders":                {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
-                            "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
-  "order_items":           {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
-                            "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
+  "orders":        {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+                    "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
+  "order_items":   {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+                    "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
 
-  "events":                {"change_cols": ["created_at"],
-                            "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-  "inventory_items":       {"change_cols": ["created_at", "sold_at"],
-                            "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-  "users":                 {"change_cols": ["created_at"],
-                            "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+  "events":        {"change_cols": ["created_at"],
+                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+  "inventory_items":{"change_cols": ["created_at","sold_at"],
+                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+  "users":         {"change_cols": ["created_at"],
+                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
 
   # Dims: no change columns → full snapshot every 6 hours (360 min)
-  "products":              {"change_cols": [],
-                            "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
-  "distribution_centers":  {"change_cols": [],
-                            "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+  "products":              {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+  "distribution_centers":  {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
 }
 
 # ------------------------------------------------------------------------------
-# HELPERS (paths, time, state)
+# HELPERS (time, paths, state, ids)
 # ------------------------------------------------------------------------------
 def _now_utc() -> datetime.datetime:
     """Timezone-aware 'now' in UTC."""
@@ -101,13 +107,14 @@ def _state_path(table: str) -> str:
     """S3 path for this table's state JSON (cursor, last run markers, etc.)."""
     return f"{STATE_PREFIX}/{table}.json"
 
-def _dest_path(table: str) -> str:
-    """Immutable run destination: s3a://.../{table}/ingest_date=YYYY-MM-DD/run_ts=HHMMSS/"""
-    return f"{DEST_BASE}/{table}/ingest_date={TODAY}/run_ts={RUN_TS}"
-
 def _bq_table_id(table: str) -> str:
     """BigQuery table identifier (no SQL)."""
     return f"bigquery-public-data.thelook_ecommerce.{table}"
+
+def _uc_full_table(table: str) -> str:
+    """Fully qualified UC table name we append to (external Parquet table)."""
+    # We keep one schema named 'raw' inside the chosen UC catalog
+    return f"{UC_CATALOG}.raw_{table}"
 
 # ---- State I/O (cursor + cadence markers) ------------------------------------
 def _load_state_blob(table: str) -> Optional[dict]:
@@ -126,7 +133,7 @@ def load_cursor(table: str) -> Optional[str]:
 def _get_last_run_utc(table: str) -> Optional[datetime.datetime]:
     """Return the last time this table successfully ran (for cadence gating)."""
     blob = _load_state_blob(table) or {}
-    for k in ("last_run_utc", "saved_at_utc", "last_dim_snapshot_utc"):  # accept older keys if present
+    for k in ("last_run_utc", "saved_at_utc", "last_dim_snapshot_utc"):
         v = blob.get(k)
         if v:
             try:
@@ -168,11 +175,7 @@ def mark_dim_snapshot(table: str, rows: int) -> None:
     (We don’t store a cursor for full-snapshot dims.)
     """
     now_iso = _now_utc().isoformat(timespec="seconds")
-    payload = {
-        "table": table,
-        "rows_last_batch": rows,
-        "last_run_utc": now_iso
-    }
+    payload = {"table": table, "rows_last_batch": rows, "last_run_utc": now_iso}
     tmp = f"{_state_path(table)}.tmp.{uuid.uuid4().hex}"
     dbutils.fs.put(tmp, json.dumps(payload), overwrite=True)
     dbutils.fs.mv(tmp, _state_path(table), recurse=False)
@@ -207,7 +210,6 @@ def _compute_lower_bound(cursor: Optional[str], grace_minutes: int = 0) -> datet
 
     if not cursor:
         return epoch
-
     try:
         c = _parse_cursor_to_dt_utc(cursor)
     except Exception:
@@ -264,19 +266,47 @@ def bq_read_filtered(table: str,
     return df if cond is None else df.filter(cond)
 
 # ------------------------------------------------------------------------------
-# RAW WRITE  (Unity Catalog Shared–safe: DataFrame-only; no .rdd)
+# RAW WRITE via UC tables (external Parquet; no direct s3a:// writes)
 # ------------------------------------------------------------------------------
 def write_raw(df: DataFrame, table: str) -> str:
     """
-    Write Parquet/Snappy to the immutable leaf path. coalesce(WRITE_PARTS)
-    reduces small files and never increases partition count (safe for Shared).
+    Append into a UC external Parquet table partitioned by (ingest_date, run_ts).
+
+    • First run:
+        - CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw
+        - WRITE DataFrame with `.saveAsTable(full_table)` and
+          `.option("path", "s3://{bucket}/{raw_prefix}/{table}")`
+          so UC registers an external table at that path.
+    • Later runs:
+        - `.insertInto(full_table)` to append.
+
+    This keeps immutable, discoverable partitions while routing I/O
+    through the UC storage credential (no instance profile needed).
     """
-    out = _dest_path(table)
-    (df.coalesce(WRITE_PARTS)
-       .write.mode("append")
-       .option("compression", "snappy")
-       .parquet(out))
-    return out
+    full_table = _uc_full_table(table)
+    table_path = f"s3://{BUCKET}/{RAW_PREFIX}/{table}"   # UC expects s3://, not s3a://
+
+    # Ensure the target schema exists (idempotent; runs fast if already present)
+    spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw")
+
+    if not spark.catalog.tableExists(full_table):
+        # First write: create the external table with DF schema + partitions.
+        (df.coalesce(WRITE_PARTS)
+           .write
+           .format("parquet")
+           .mode("append")
+           .option("path", table_path)
+           .partitionBy("ingest_date", "run_ts")
+           .saveAsTable(full_table))
+    else:
+        # Later writes: append using table metadata/location.
+        (df.coalesce(WRITE_PARTS)
+           .write
+           .format("parquet")
+           .mode("append")
+           .insertInto(full_table))
+
+    return f"table://{full_table}"
 
 # ------------------------------------------------------------------------------
 # CURSOR ADVANCEMENT (DataFrame-only ops)
@@ -293,8 +323,6 @@ def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Opt
 
     epoch_spark = F.to_timestamp(F.lit("1970-01-01 00:00:00"))
     cols = [F.coalesce(F.to_timestamp(F.col(c)), epoch_spark) for c in change_cols]
-
-    # Single-col fast path; greatest() needs 2+ cols
     chg_expr = cols[0].alias("chg") if len(cols) == 1 else F.greatest(*cols).alias("chg")
 
     row = df.select(chg_expr).agg(F.max("chg").alias("m")).first()
@@ -334,7 +362,7 @@ for table, cfg in TABLES.items():
                         "cadence_min": cadence_minutes, "mins_since": mins_since})
         continue
 
-    # A) Dimension WITHOUT change columns → FULL SNAPSHOT each time it's due
+    # A) Dims WITHOUT change columns → FULL SNAPSHOT when due
     if is_dim and len(change_cols) == 0:
         df = (
             spark.read.format("bigquery")
@@ -342,7 +370,9 @@ for table, cfg in TABLES.items():
             .options(**BQ_AUTH)
             .option("table", _bq_table_id(table))
             .load()
+            # Add lineage & partition columns expected by UC table
             .withColumn("ingest_date", F.lit(TODAY))
+            .withColumn("run_ts", F.lit(RUN_TS))
             .withColumn("ingest_ts_utc", F.current_timestamp())
             .withColumn("source_table", F.lit(table))
         )
@@ -351,8 +381,7 @@ for table, cfg in TABLES.items():
         if n == 0:
             print(f"{table}: no rows (full snapshot).")
             results.append({"table": table, "status": "no_data"})
-            # still mark last_run so cadence gating works even if empty
-            mark_dim_snapshot(table, 0)
+            mark_dim_snapshot(table, 0)  # still stamp last_run so cadence gating works
             continue
 
         dest = write_raw(df, table)
@@ -371,9 +400,11 @@ for table, cfg in TABLES.items():
             grace_minutes=grace_minutes,
             cursor=cursor
         )
-        .withColumn("ingest_date", F.lit(TODAY))            # partition tag
-        .withColumn("ingest_ts_utc", F.current_timestamp()) # load timestamp
-        .withColumn("source_table", F.lit(table))           # lineage
+        # Add lineage & partition columns expected by UC table
+        .withColumn("ingest_date", F.lit(TODAY))
+        .withColumn("run_ts", F.lit(RUN_TS))
+        .withColumn("ingest_ts_utc", F.current_timestamp())
+        .withColumn("source_table", F.lit(table))
     )
 
     # Materialize & check emptiness (single action)
@@ -385,7 +416,7 @@ for table, cfg in TABLES.items():
         results.append({"table": table, "status": "no_data"})
         continue
 
-    # Write RAW
+    # Write RAW via UC external table
     dest = write_raw(df, table)
     print(f"{table}: wrote {n} rows → {dest}")
 
@@ -405,11 +436,13 @@ for table, cfg in TABLES.items():
         results.append({"table": table, "status": "ok_no_cursor", "rows": n})
 
 # ------------------------------------------------------------------------------
-# OPTIONAL: quick visibility check on today's 'users' partition
+# OPTIONAL: quick visibility check for today's partition in UC table
 # ------------------------------------------------------------------------------
 try:
-    display(dbutils.fs.ls(f"s3a://{BUCKET}/{RAW_PREFIX}/users/ingest_date={TODAY}/"))
+    users_tbl = _uc_full_table("users")
+    cnt = spark.table(users_tbl).where(F.col("ingest_date") == TODAY).count()
+    print(f"Users rows ingested today: {cnt} (table: {users_tbl})")
 except Exception as e:
-    print(f"Listing error (non-fatal): {e}")
+    print(f"Visibility check error (non-fatal): {e}")
 
 print("\nSummary:", results)

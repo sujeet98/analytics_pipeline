@@ -14,6 +14,7 @@ Important env vars you can set on the Job:
   - BRONZE_PREFIX               (optional; for dbt later)
   - GOOGLE_APPLICATION_CREDENTIALS_B64  (base64 of SA JSON; optional if using OIDC)
   - DATABRICKS_SECRETS_SCOPE    (e.g., "analyticsProject") – used only if the env var above is not set
+  - UC_CATALOG                  (e.g., "sujeet_data_analytics_workspace")
 """
 
 import os
@@ -61,3 +62,10 @@ def get_bq_auth_options() -> Dict[str, str]:
         scope = os.environ.get("DATABRICKS_SECRETS_SCOPE", "analyticsProject")
         b64 = _get_secret(scope, "GOOGLE_APPLICATION_CREDENTIALS_B64")
     return {"credentials": b64} if b64 else {}
+
+def get_uc_catalog() -> str:
+    """
+    Unity Catalog to write RAW external tables into.
+    Default to your current workspace catalog; override per env via UC_CATALOG.
+    """
+    return os.environ.get("UC_CATALOG", "sujeet_data_analytics_workspace")
