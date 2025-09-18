@@ -273,6 +273,23 @@ def bq_read_filtered(table: str,
 # ------------------------------------------------------------------------------
 # RAW WRITE via UC tables (external Parquet; no direct s3a:// writes)
 # ------------------------------------------------------------------------------
+
+def _normalize_system_cols(df: DataFrame) -> DataFrame:
+    """
+    Make sure our 4 system columns always have stable types:
+      - ingest_date : STRING   (partition)
+      - run_ts      : STRING   (partition)
+      - ingest_ts_utc: TIMESTAMP
+      - source_table: STRING
+    This prevents 'incompatible cast' errors when appending to existing UC tables.
+    """
+    return (
+        df.withColumn("ingest_date", F.col("ingest_date").cast("string"))
+          .withColumn("run_ts", F.col("run_ts").cast("string"))
+          .withColumn("ingest_ts_utc", F.to_timestamp(F.col("ingest_ts_utc")))
+          .withColumn("source_table", F.col("source_table").cast("string"))
+    )
+
 def write_raw(df: DataFrame, table: str) -> str:
     """
     Append into a UC external Parquet table partitioned by (ingest_date, run_ts).
@@ -291,6 +308,8 @@ def write_raw(df: DataFrame, table: str) -> str:
     full_table = _uc_full_table(table)
     table_path = f"s3://{BUCKET}/{RAW_PREFIX}/{table}"   # UC expects s3://, not s3a://
 
+    df = _normalize_system_cols(df) # enforce stable types of system columns
+    
     # Ensure the target schema exists (idempotent; runs fast if already present)
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw")
 
