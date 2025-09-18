@@ -290,6 +290,26 @@ def _normalize_system_cols(df: DataFrame) -> DataFrame:
           .withColumn("source_table", F.col("source_table").cast("string"))
     )
 
+def _align_to_table_schema(df: DataFrame, full_table: str) -> DataFrame:
+    """
+    Reorder & cast the DataFrame columns to exactly match the UC table schema.
+    This avoids 'Cannot safely cast' errors that happen because insertInto()
+    is position-based (not name-based) and strict about types.
+    """
+    tbl_schema = spark.table(full_table).schema
+    out = df
+    # Ensure every table column exists and has the correct type
+    for f in tbl_schema:
+        if f.name in out.columns:
+            # Cast if types differ (e.g., string -> timestamp)
+            if out.schema[f.name].dataType != f.dataType:
+                out = out.withColumn(f.name, F.col(f.name).cast(f.dataType.simpleString()))
+        else:
+            # Add missing column as NULL of the right type
+            out = out.withColumn(f.name, F.lit(None).cast(f.dataType.simpleString()))
+    # Drop any extra DF cols and reorder to table order
+    return out.select([F.col(f.name) for f in tbl_schema])
+
 def write_raw(df: DataFrame, table: str) -> str:
     """
     Append into a UC external Parquet table partitioned by (ingest_date, run_ts).
@@ -309,7 +329,7 @@ def write_raw(df: DataFrame, table: str) -> str:
     table_path = f"s3://{BUCKET}/{RAW_PREFIX}/{table}"   # UC expects s3://, not s3a://
 
     df = _normalize_system_cols(df) # enforce stable types of system columns
-    
+
     # Ensure the target schema exists (idempotent; runs fast if already present)
     spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw")
 
@@ -323,12 +343,13 @@ def write_raw(df: DataFrame, table: str) -> str:
            .partitionBy("ingest_date", "run_ts")
            .saveAsTable(full_table))
     else:
-        # Later writes: append using table metadata/location.
-        (df.coalesce(WRITE_PARTS)
-           .write
-           .format("parquet")
-           .mode("append")
-           .insertInto(full_table))
+        # ✅ Align DF to table schema (names & types) before position-based insert
+        aligned = _align_to_table_schema(df, full_table)
+        (aligned.coalesce(WRITE_PARTS)
+               .write
+               .format("parquet")
+               .mode("append")
+               .insertInto(full_table))
 
     return f"table://{full_table}"
 
