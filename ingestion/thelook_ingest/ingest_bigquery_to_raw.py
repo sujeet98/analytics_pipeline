@@ -44,6 +44,7 @@ from typing import Optional, List, Dict
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
+from pyspark.dbutils import DBUtils
 from .config import (
     get_project, get_bq_auth_options, get_bucket, get_raw_prefix, get_uc_catalog
 )
@@ -121,6 +122,7 @@ def _uc_full_table(table: str) -> str:
 def _load_state_blob(table: str) -> Optional[dict]:
     """Return the raw JSON state dict for a table, or None if missing."""
     try:
+        dbutils = DBUtils(spark)
         raw = dbutils.fs.head(_state_path(table), 4096)
         return json.loads(raw)
     except Exception:
@@ -158,6 +160,7 @@ def _is_due(table: str, cadence_minutes: int) -> bool:
 
 def save_cursor(table: str, cursor_str: str, rows: int) -> None:
     """Persist the new cursor + minimal metadata (atomic write via tmp + mv)."""
+    dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {
         "table": table,
@@ -175,6 +178,7 @@ def mark_dim_snapshot(table: str, rows: int) -> None:
     For dimensions without change columns, simply record the last snapshot time.
     (We don’t store a cursor for full-snapshot dims.)
     """
+    dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {"table": table, "rows_last_batch": rows, "last_run_utc": now_iso}
     tmp = f"{_state_path(table)}.tmp.{uuid.uuid4().hex}"
