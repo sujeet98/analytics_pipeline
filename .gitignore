@@ -1,1 +1,9 @@
+# Ignore env files
 .env
+**/.env
+.env.*
+**/.env.*
+
+# But keep templates in git
+!.env.example
+!.env.sample
