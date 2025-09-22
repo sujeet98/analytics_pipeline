@@ -1,34 +1,51 @@
 # raw_to_bronze_autoloader.py
 #
 # Purpose:
-#   Move immutable RAW Parquet files in S3 (partitioned by ingest_date/run_ts)
-#   into Unity Catalog Delta tables in the bronze schema using Auto Loader.
+#   Promote immutable RAW Parquet files (partitioned by ingest_date/run_ts)
+#   from a Unity Catalog Volume into **managed Delta** tables in the Bronze schema,
+#   using Databricks Auto Loader (cloudFiles).
 #
-# Run mode:
-#   - Uses .trigger(availableNow=True): batch-like; processes what's new and exits.
-#   - Sequentially processes one table at a time (resource-friendly on small clusters).
+# Execution model:
+#   - .trigger(availableNow=True) → batch-like: process what's pending and exit.
+#   - Sequentially processes each table (resource- and cost-friendly).
 #
-# Notes:
-#   - On FIRST run, we set includeExistingFiles=true so Auto Loader ingests all existing RAW files.
-#   - On SUBSEQUENT runs, the checkpoint prevents re-reading old files—only new files are ingested.
-#   - Partition columns are recovered from the folder layout (ingest_date=..., run_ts=...).
-#   - We normalize the four "system columns" to stable types (string/string/timestamp/string),
-#     which prevents future "cannot safely cast" errors on append.
+# Storage model:
+#   - RAW files live under a UC **Volume** (e.g., /Volumes/<CAT>/raw/raw_files/thelook/<table>).
+#   - Auto Loader metadata (schema + checkpoints) also saved under the same Volume
+#     so Serverless can write without NAT/IAM instance profiles.
+#   - Bronze are **managed UC Delta tables** (no S3 folder/Volume needed for Bronze).
+#
+# First run behavior:
+#   - includeExistingFiles=true → backfills all existing RAW files once.
+#   - Subsequent runs only pick up new files thanks to the checkpoint.
 
-import sys
+import os
 from typing import List
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
+from pyspark.dbutils import DBUtils
 
-# --------------------------
-# 0) Config — adjust safely
-# --------------------------
-CATALOG      = "sujeet_data_analytics_workspace"
-BRONZE_SCHEMA= "bronze_dev"     # or "bronze_prod" in prod
-BUCKET       = "analyticsbucketdev-sk" 
-RAW_PREFIX   = "raw/thelook"  # e.g. "raw/thelook"
+# ---------------------------------------
+# 0) Config — set via env or defaults
+# ---------------------------------------
+CATALOG        = os.getenv("UC_CATALOG", "sujeet_data_analytics_workspace")
+BRONZE_SCHEMA  = os.getenv("BRONZE_SCHEMA", "bronze_dev")  # swap to bronze_prod in prod
 
-# The RAW tables we want to promote to BRONZE
+# RAW Volume root (where the ingestion job wrote the Parquet files)
+# Example existing Volume: /Volumes/<CATALOG>/raw/raw_files
+RAW_VOLUME_PATH = os.getenv("RAW_VOLUME_PATH", f"/Volumes/{CATALOG}/raw/raw_files")
+
+# Source namespace under RAW (keeps sources cleanly separated)
+# e.g., thelook, stripe, salesforce, etc.
+SOURCE_NAME    = os.getenv("SOURCE_NAME", "thelook")
+RAW_SOURCE_DIR = f"{RAW_VOLUME_PATH}/{SOURCE_NAME}"
+
+# Auto Loader metadata (schemas + checkpoints) placed under the RAW Volume as well
+# to keep the whole pipeline Serverless-friendly.
+SCHEMA_BASE    = f"{RAW_SOURCE_DIR}/_autoloader/schemas/bronze"
+CHECKPT_BASE   = f"{RAW_SOURCE_DIR}/_autoloader/checkpoints/bronze"
+
+# The RAW tables to promote to Bronze
 TABLES: List[str] = [
     "orders",
     "order_items",
@@ -39,28 +56,29 @@ TABLES: List[str] = [
     "distribution_centers",
 ]
 
-# Internal (non-data) locations for Auto Loader metadata
-# Keep these OUTSIDE of your data paths:
-SCHEMA_BASE  = f"s3://{BUCKET}/_autoloader/_schemas/bronze"
-CHECKPT_BASE = f"s3://{BUCKET}/_autoloader/_checkpoints/bronze"
-
-# Optionally switch this OFF after the first successful backfill for each table.
-INCLUDE_EXISTING_FILES = "true"  # "true" = backfill historical files on first run
+# Backfill existing files on the first run for each table (checkpoint prevents re-read later)
+INCLUDE_EXISTING_FILES = os.getenv("INCLUDE_EXISTING_FILES", "true")  # "true" / "false"
 
 
-# ------------------------------------------------------------
-# 1) Spark session + ensure the target schema exists in UC
-# ------------------------------------------------------------
+# ---------------------------------------
+# 1) Spark session & target schema
+# ---------------------------------------
 spark = SparkSession.builder.appName("raw-to-bronze-autoloader").getOrCreate()
-
-# Create schema once (idempotent)
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{BRONZE_SCHEMA}")
 
+dbutils = DBUtils(spark)
 
-# ----------------------------------------------------------------
-# 2) (Optional) normalize system columns to stable, known types
-#     - This keeps appends safe across runs/schema evolution.
-# ----------------------------------------------------------------
+def _ensure_dir(path: str) -> None:
+    """Idempotent mkdirs on a UC Volume path."""
+    try:
+        dbutils.fs.mkdirs(path)
+    except Exception:
+        pass  # harmless if it already exists
+
+
+# ---------------------------------------
+# 2) Type hygiene for system columns
+# ---------------------------------------
 def normalize_system_cols(df: DataFrame) -> DataFrame:
     """
     Enforce stable types for our four system columns so append never fails:
@@ -68,7 +86,7 @@ def normalize_system_cols(df: DataFrame) -> DataFrame:
       - run_ts        : STRING
       - ingest_ts_utc : TIMESTAMP
       - source_table  : STRING
-    (If a column isn't present, add it as NULL of the correct type.)
+    If any are missing, add as NULL with the correct type.
     """
     want = {
         "ingest_date":   "string",
@@ -86,35 +104,38 @@ def normalize_system_cols(df: DataFrame) -> DataFrame:
     return out
 
 
-# ----------------------------------------------------------------
-# 3) One table run: RAW path -> Auto Loader -> Delta table (BRONZE)
-# ----------------------------------------------------------------
+# -------------------------------------------------------
+# 3) One table: RAW Volume → Auto Loader → Bronze table
+# -------------------------------------------------------
 def run_one_table(table: str):
     """
-    Read from RAW Parquet files under:
-        s3://<bucket>/<raw_prefix>/<table>/** (partitioned by ingest_date/run_ts)
-    and write to UC Delta table:
-        <CATALOG>.<BRONZE_SCHEMA>.<table>
-    using Auto Loader with a checkpoint for exactly-once semantics.
+    Reads RAW Parquet from:
+        {RAW_SOURCE_DIR}/{table}/**  (partition dirs: ingest_date=.../run_ts=...)
+    Writes to managed UC Delta table:
+        {CATALOG}.{BRONZE_SCHEMA}.{table}
+    Uses Auto Loader with schema + checkpoint stored under the RAW Volume.
     """
-    raw_root = f"s3://{BUCKET}/{RAW_PREFIX}/{table}"
+    raw_root   = f"{RAW_SOURCE_DIR}/{table}"
     schema_loc = f"{SCHEMA_BASE}/{table}"
     checkpoint = f"{CHECKPT_BASE}/{table}"
     target_tbl = f"{CATALOG}.{BRONZE_SCHEMA}.{table}"
 
-    print(f"\n=== RAW -> BRONZE: {table} ===")
-    print(f"Source:     {raw_root}")
-    print(f"Checkpoint: {checkpoint}")
-    print(f"Schema loc: {schema_loc}")
-    print(f"Target:     {target_tbl}")
+    # Make sure our metadata dirs exist on the Volume (serverless-friendly)
+    _ensure_dir(schema_loc)
+    _ensure_dir(checkpoint)
 
-    # Construct the reader:
-    # - format("cloudFiles"): turn on Auto Loader
-    # - cloudFiles.format=parquet: our RAW files are Parquet
-    # - cloudFiles.schemaLocation: where Auto Loader stores inferred schema state
-    # - cloudFiles.includeExistingFiles: backfill existing files on 1st run
-    # - cloudFiles.partitionColumns: tell AL to derive cols from folder names
-    #   (our RAW writer partitioned by ingest_date=YYYY-MM-DD/run_ts=HHMMSS)
+    print(f"\n=== RAW → BRONZE (Auto Loader): {table} ===")
+    print(f"Source RAW dir : {raw_root}")
+    print(f"Schema location: {schema_loc}")
+    print(f"Checkpoint     : {checkpoint}")
+    print(f"Target UC table: {target_tbl}")
+
+    # Build Auto Loader reader:
+    # - cloudFiles.format=parquet → our RAW files
+    # - schemaLocation           → where AL persists inferred schema state
+    # - includeExistingFiles     → backfill all historical files on first run
+    # - partitionColumns         → pick up ingest_date/run_ts from folder names
+    # - schemaEvolutionMode      → allow new columns to appear later
     reader = (
         spark.readStream
              .format("cloudFiles")
@@ -122,40 +143,4 @@ def run_one_table(table: str):
              .option("cloudFiles.schemaLocation", schema_loc)
              .option("cloudFiles.includeExistingFiles", INCLUDE_EXISTING_FILES)
              .option("cloudFiles.partitionColumns", "ingest_date,run_ts")
-             # Optional evolution: add new columns without failing future appends
              .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-             # Optional: listing mode is default (cheap); no SQS/SNS needed
-             # .option("cloudFiles.useNotifications", "false")
-    )
-
-    # Load the RAW folder (Auto Loader recursively discovers subfolders/partitions)
-    df_raw = reader.load(raw_root)
-
-    # Bronze = faithful copy (+ very light hygiene to keep types stable)
-    df_bronze = normalize_system_cols(df_raw)
-
-    # Write stream to a UC Delta table.
-    # - checkpointLocation: AL keeps "what I've processed" here (exactly-once)
-    # - mergeSchema=true: allow new columns to be added later
-    # - trigger(availableNow=True): process what's pending, then stop
-    query = (
-        df_bronze.writeStream
-                 .option("checkpointLocation", checkpoint)
-                 .option("mergeSchema", "true")
-                 .trigger(availableNow=True)
-                 .toTable(target_tbl)   # creates table if it doesn't exist
-    )
-
-    # Wait for this table's backfill/incremental run to finish before moving on
-    query.awaitTermination()
-    print(f"{table}: done (Auto Loader availableNow run completed).")
-
-
-# ---------------------------------------------
-# 4) Run all tables sequentially (safe & simple)
-# ---------------------------------------------
-if __name__ == "__main__":
-    for t in TABLES:
-        run_one_table(t)
-
-    print("\nAll tables processed.")
