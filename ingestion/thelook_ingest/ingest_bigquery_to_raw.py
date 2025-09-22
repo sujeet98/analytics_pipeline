@@ -1,52 +1,38 @@
-# 01_ingest_bigquery_raw_incremental_v10_volume.py
+# 01_ingest_bigquery_to_raw_volume.py
 #
-# ------------------------------------------------------------------------------
-# OVERVIEW
-# ------------------------------------------------------------------------------
-# PURPOSE
-#   Incrementally ingest BigQuery public dataset
-#   `bigquery-public-data.thelook_ecommerce` into an immutable RAW **files**
-#   layer on S3, accessed through a **Unity Catalog Volume** (so it works on
-#   Serverless without instance profiles or NAT).
+# ──────────────────────────────────────────────────────────────────────────────
+# GOAL
+# ──────────────────────────────────────────────────────────────────────────────
+# Pull data incrementally from BigQuery public dataset
+#   bigquery-public-data.thelook_ecommerce
+# and write **append-only Parquet files** into a Unity Catalog **External Volume**
+# that maps to s3://.../raw/thelook (your RAW landing zone).
 #
-# WHY VOLUMES?
-#   • UC Volumes encapsulate S3 access via a UC Storage Credential + External
-#     Location. This means your jobs (including Serverless) do not need IAM
-#     instance profiles and you avoid NAT costs/complexity.
-#   • We write **files** (Parquet) instead of UC external tables at RAW, which
-#     is a common landing zone pattern. Auto Loader will pick these up and load
-#     Bronze tables (managed Delta) inside UC.
+# Why a Volume? It gives Serverless secure, direct access to S3 without you
+# managing VPC/NAT/instance profiles. Partners can keep dropping files into
+# s3://.../raw/thelook, while *you* read & write through /Volumes/... in jobs.
 #
-# LAYOUT (namespaced by source)
-#   /Volumes/{CATALOG}/raw/raw_files/{SOURCE}/
-#     ├── _state/                # per-table cursor/state JSON files
-#     ├── orders/                # per-table append-only Parquet
-#     │   └── ingest_date=YYYY-MM-DD/run_ts=HHMMSS/part-*.snappy.parquet
-#     ├── order_items/...
-#     └── users/...
+# Files are partitioned as:
+#   {RAW_VOLUME}/{table}/ingest_date=YYYY-MM-DD/run_ts=HHMMSS/part-*.snappy.parquet
 #
-# INCREMENTAL LOGIC
-#   • Per-table cadence gate: only run when the table’s `run_every_minutes` has
-#     elapsed since last success.
-#   • Lower bound (LB) = max(epoch, min(cursor, now) - grace_minutes).
-#   • Facts/dims WITH change columns filter rows using LB; dims WITHOUT change
-#     columns are full-snapshotted when due.
-#   • Cursor is advanced to the max observed change timestamp (capped at now).
+# We also maintain per-table cursor JSON at:
+#   {RAW_VOLUME}/_state/{table}.json
 #
-# KNOBS
-#   - TABLES[*].run_every_minutes  → when each table should run.
-#   - TABLES[*].grace_minutes      → how far to re-read for late/backdated rows.
-#   - WRITE_PARTS                  → coalesce target (# output files).
-#   - INCLUDE_NULLS_ON_FIRST_RUN   → include NULL change timestamps on first load.
+# Schedule: Every 10–30 minutes (max concurrent runs = 1).
 #
-# OPERATION
-#   • Schedule this job every 10 minutes (max concurrent runs = 1).
-#   • UC permissions required for the principal running the job:
-#       - USE CATALOG on your UC catalog
-#       - USE SCHEMA on the `raw` schema
-#       - READ FILES / WRITE FILES on the external **Volume** (e.g., raw.raw_files)
-#   • No instance profile / NAT required when using Serverless + Volumes.
-# ------------------------------------------------------------------------------
+# Prereqs (already done per your setup):
+#   1) External Location 'raw_thelook' → s3://analyticsbucketdev-sk/raw
+#   2) External Volume  'raw_thelook_files' (in catalog.schema = sujeet_data_analytics_workspace.raw)
+#      Volume path: /Volumes/sujeet_data_analytics_workspace/raw/raw_thelook_files
+#   3) Grants: READ FILES/WRITE FILES on that Volume for the job principal
+#   4) Spark BigQuery connector available (DBR 12+ with built-in connector)
+#
+# Tips:
+#   • First run will backfill (from epoch) using a grace window to catch late rows.
+#   • Next runs advance a high-watermark cursor and only fetch deltas.
+#   • Nothing here creates UC tables; these are just files for your RAW zone.
+#     Your Auto Loader job will read from the same Volume path into Bronze tables.
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os, datetime, json, uuid
 from typing import Optional, List, Dict
@@ -56,76 +42,77 @@ from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
 from pyspark.dbutils import DBUtils
 
+# If you prefer env vars instead of a config helper, you can swap out these imports.
+# In your repo you already have a config module; we’ll keep using it:
 from .config import (
-    get_project, get_bq_auth_options, get_uc_catalog
-    # Note: bucket/prefix not needed with Volumes
+    get_project,            # returns GCP project for BQ billing
+    get_bq_auth_options,    # returns dict of Spark BigQuery connector auth options
 )
 
-# ------------------------------------------------------------------------------
-# ENVIRONMENT / PATHS
-# ------------------------------------------------------------------------------
-PROJECT_ID = get_project()                 # GCP project billed for BigQuery reads
-BQ_AUTH    = get_bq_auth_options()         # Spark–BigQuery connector auth dict
-UC_CATALOG = get_uc_catalog()              # e.g., "sujeet_data_analytics_workspace"
+# ──────────────────────────────────────────────────────────────────────────────
+# 0) RUNTIME CONSTANTS
+# ──────────────────────────────────────────────────────────────────────────────
 
-# Root of the RAW files Volume (backed by your external location / S3 path)
-RAW_ROOT = os.getenv(
+# Where we will WRITE the RAW Parquet files and READ/WRITE cursor JSON.
+# You created this Volume already and it points at s3://.../raw/thelook
+RAW_VOLUME = os.getenv(
     "RAW_VOLUME_PATH",
-    f"/Volumes/{UC_CATALOG}/raw/raw_files"
-)
+    "/Volumes/sujeet_data_analytics_workspace/raw/raw_thelook_files"
+).rstrip("/")  # keep tidy (avoid trailing slash duplication)
 
-# Source namespace under RAW (lets you add more sources later without collision)
-# Example: thelook, stripe, salesforce, etc.
-SOURCE_NAME = os.getenv("SOURCE_NAME", "thelook")
+# BigQuery billing project & connector auth
+PROJECT_ID = get_project()
+BQ_AUTH    = get_bq_auth_options()   # e.g., {"credentials": "..."} or {"gcsBucket": "..."} etc.
 
-# All files and state for this source will live under RAW_SOURCE_DIR
-RAW_SOURCE_DIR = f"{RAW_ROOT}/{SOURCE_NAME}"     # e.g., /Volumes/<CAT>/raw/raw_files/thelook
+# Run metadata (UTC so partitions are stable irrespective of cluster TZ)
+TODAY  = datetime.date.today().isoformat()                               # "YYYY-MM-DD"
+RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S") # "HHMMSS"
 
-# Per-table state (cursor & last_run metadata) is tracked in JSON files here
-STATE_PREFIX = f"{RAW_SOURCE_DIR}/_state"
+# Cursor/state lives inside the same RAW volume, under a hidden-ish folder
+STATE_PREFIX = f"{RAW_VOLUME}/_state"
 
-# Global run metadata (UTC for reproducibility)
-TODAY  = datetime.date.today().isoformat()                                # "YYYY-MM-DD"
-RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S")  # "HHMMSS" (UTC)
+# Output file sizing: coalesce reduces the # of small files (tune if needed)
+WRITE_PARTS = int(os.getenv("WRITE_PARTS", "16"))
 
-# Output file sizing (coalesce reduces partitions; never increases)
-WRITE_PARTS = int(os.getenv("WRITE_PARTS", "32"))
-
-# Include NULL change timestamps on the very first run?
+# First-ever run behavior: include rows missing change_ts columns (NULLs)
 INCLUDE_NULLS_ON_FIRST_RUN = True
 
-# Recommended Spark settings (idempotent; set here for clarity)
+# Recommended Spark bits (safe to re-run)
 spark = SparkSession.builder.appName("thelook-bq-to-raw-volume").getOrCreate()
 spark.conf.set("spark.sql.session.timeZone", "UTC")
 spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
 
-# ------------------------------------------------------------------------------
-# TABLE CONFIGURATION (cadence & change columns)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) SOURCE TABLE CONFIG
+#    - change_cols: columns that tell us “a row changed” (created/updated/etc.)
+#    - grace_minutes: re-read window to catch late arriving/updated records
+#    - run_every_minutes: cadence gate (we'll skip a table if not yet due)
+# ──────────────────────────────────────────────────────────────────────────────
 TABLES: Dict[str, Dict] = {
-    # Facts (two cadence buckets for illustration)
-    "orders":        {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+  # Facts (two cadence buckets shown only as example)
+  "orders":          {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
                       "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
-    "order_items":   {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+  "order_items":     {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
                       "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
 
-    "events":        {"change_cols": ["created_at"],
+  "events":          {"change_cols": ["created_at"],
                       "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-    "inventory_items":{"change_cols": ["created_at","sold_at"],
+  "inventory_items": {"change_cols": ["created_at","sold_at"],
                       "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-    "users":         {"change_cols": ["created_at"],
+  "users":           {"change_cols": ["created_at"],
                       "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
 
-    # Dims: no change columns → full snapshot every 6 hours (360 min)
-    "products":              {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
-    "distribution_centers":  {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+  # Dims without change columns → full snapshot when due (every 6 hours here)
+  "products":              {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+  "distribution_centers":  {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
 }
 
-# ------------------------------------------------------------------------------
-# HELPERS (time, paths, state, ids)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 2) SMALL HELPERS (time, paths, state)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _now_utc() -> datetime.datetime:
-    """Timezone-aware 'now' in UTC."""
+    """Timezone-aware 'now' in UTC (used for cadence & logging)."""
     return datetime.datetime.now(datetime.timezone.utc)
 
 def _state_path(table: str) -> str:
@@ -133,34 +120,16 @@ def _state_path(table: str) -> str:
     return f"{STATE_PREFIX}/{table}.json"
 
 def _bq_table_id(table: str) -> str:
-    """BigQuery table identifier (no SQL)."""
+    """BigQuery identifier that the Spark connector understands (table path; no SQL)."""
     return f"bigquery-public-data.thelook_ecommerce.{table}"
 
-def _ensure_dir(path: str) -> None:
-    """Create a directory in the Volume if it doesn't exist (idempotent)."""
-    try:
-        dbutils = DBUtils(spark)
-        dbutils.fs.mkdirs(path)
-    except Exception:
-        # Silently ignore; mkdirs is idempotent and Volume permissions might be read-only in some tests.
-        pass
+# ── State I/O (cursor + cadence markers) ──────────────────────────────────────
 
-def _ensure_state_dir() -> None:
-    """Ensure the per-source _state directory exists."""
-    _ensure_dir(STATE_PREFIX)
-
-def _ensure_table_dir(table: str) -> str:
-    """Ensure the per-table directory exists and return it."""
-    target_dir = f"{RAW_SOURCE_DIR}/{table}"
-    _ensure_dir(target_dir)
-    return target_dir
-
-# ---- State I/O (cursor + cadence markers) ------------------------------------
 def _load_state_blob(table: str) -> Optional[dict]:
-    """Return the raw JSON state dict for a table, or None if missing."""
+    """Return the saved state dict for a table, or None if missing/invalid."""
     try:
         dbutils = DBUtils(spark)
-        raw = dbutils.fs.head(_state_path(table), 4096)
+        raw = dbutils.fs.head(_state_path(table), 4096)  # small file, read first 4KB
         return json.loads(raw)
     except Exception:
         return None
@@ -171,7 +140,7 @@ def load_cursor(table: str) -> Optional[str]:
     return blob.get("cursor") if blob else None
 
 def _get_last_run_utc(table: str) -> Optional[datetime.datetime]:
-    """Return the last time this table successfully ran (for cadence gating)."""
+    """Return last successful run time (used for cadence gating)."""
     blob = _load_state_blob(table) or {}
     for k in ("last_run_utc", "saved_at_utc", "last_dim_snapshot_utc"):
         v = blob.get(k)
@@ -184,20 +153,19 @@ def _get_last_run_utc(table: str) -> Optional[datetime.datetime]:
 
 def _is_due(table: str, cadence_minutes: int) -> bool:
     """
-    Per-table cadence gate:
-      • If cadence_minutes <= 0 → always due (no gating).
-      • Else → run only if 'cadence_minutes' elapsed since last successful run.
+    Gate by cadence:
+      • cadence_minutes <= 0  → always due
+      • otherwise run only if that many minutes elapsed since last success
     """
     if cadence_minutes is None or cadence_minutes <= 0:
         return True
     last = _get_last_run_utc(table)
     if not last:
-        return True  # never ran
+        return True
     return (_now_utc() - last).total_seconds() >= cadence_minutes * 60
 
 def save_cursor(table: str, cursor_str: str, rows: int) -> None:
-    """Persist the new cursor + minimal metadata (atomic write via tmp + mv)."""
-    _ensure_state_dir()
+    """Persist the new cursor + lightweight metadata (atomic write via tmp + mv)."""
     dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {
@@ -205,18 +173,14 @@ def save_cursor(table: str, cursor_str: str, rows: int) -> None:
         "cursor": cursor_str,            # 'YYYY-MM-DD HH:MM:SS+00'
         "rows_last_batch": rows,
         "saved_at_utc": now_iso,
-        "last_run_utc": now_iso,         # cadence gating uses this
+        "last_run_utc": now_iso,         # used by cadence gate
     }
     tmp = f"{_state_path(table)}.tmp.{uuid.uuid4().hex}"
     dbutils.fs.put(tmp, json.dumps(payload), overwrite=True)
     dbutils.fs.mv(tmp, _state_path(table), recurse=False)
 
 def mark_dim_snapshot(table: str, rows: int) -> None:
-    """
-    For dimensions without change columns, simply record the last snapshot time.
-    (We don’t store a cursor for full-snapshot dims.)
-    """
-    _ensure_state_dir()
+    """For 'full-snapshot' dims, record last snapshot time (no cursor)."""
     dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {"table": table, "rows_last_batch": rows, "last_run_utc": now_iso}
@@ -224,9 +188,10 @@ def mark_dim_snapshot(table: str, rows: int) -> None:
     dbutils.fs.put(tmp, json.dumps(payload), overwrite=True)
     dbutils.fs.mv(tmp, _state_path(table), recurse=False)
 
-# ------------------------------------------------------------------------------
-# INCREMENTAL FILTERING (lower bound + pushdown predicate)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 3) INCREMENTAL WINDOW (lower bound + pushdown predicate)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _parse_cursor_to_dt_utc(cursor: str) -> datetime.datetime:
     """
     Parse stored cursor into timezone-aware UTC datetime.
@@ -244,6 +209,9 @@ def _compute_lower_bound(cursor: Optional[str], grace_minutes: int = 0) -> datet
 
       First run  → LB = epoch
       Otherwise  → LB = max(epoch, min(cursor, now_utc) - grace_minutes)
+
+    We cap the saved cursor at 'now' to avoid future-dated bounds (sources sometimes
+    have timestamps in the future).
     """
     epoch   = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
     now_utc = _now_utc()
@@ -255,7 +223,7 @@ def _compute_lower_bound(cursor: Optional[str], grace_minutes: int = 0) -> datet
     except Exception:
         return epoch
 
-    effective_cursor = min(c, now_utc)  # guard future-dated cursors
+    effective_cursor = min(c, now_utc)
     lb = effective_cursor - datetime.timedelta(minutes=max(0, int(grace_minutes)))
     return max(lb, epoch)
 
@@ -267,7 +235,7 @@ def _build_pushdown_filter(change_cols: List[str],
         OR_i (to_timestamp(col_i) >= LB) [OR col_i IS NULL on first run]
     """
     if not change_cols:
-        return None  # dims (without change cols) → full table read
+        return None  # dims without change columns → full table read
 
     lb_lit = F.lit(lb_dt.strftime("%Y-%m-%d %H:%M:%S")).cast("timestamp")
 
@@ -275,14 +243,15 @@ def _build_pushdown_filter(change_cols: List[str],
     for c in change_cols:
         ts_col = F.to_timestamp(F.col(c))
         p = (ts_col >= lb_lit)
-        if include_nulls:  # emulate COALESCE-to-epoch on first run
+        if include_nulls:
             p = p | ts_col.isNull()
         cond = p if cond is None else (cond | p)
     return cond
 
-# ------------------------------------------------------------------------------
-# BIGQUERY READ (TABLE + PUSHDOWN; NO MATERIALIZATION)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) BIGQUERY READ (direct table read via Storage API; no staging)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def bq_read_filtered(table: str,
                      change_cols: List[str],
                      grace_minutes: int,
@@ -305,17 +274,17 @@ def bq_read_filtered(table: str,
     df = reader.load()
     return df if cond is None else df.filter(cond)
 
-# ------------------------------------------------------------------------------
-# RAW WRITE via UC Volume (external files; no tables)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 5) RAW WRITE (Parquet files under the Volume path; no UC tables)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _normalize_system_cols(df: DataFrame) -> DataFrame:
     """
-    Ensure our 4 system columns always have stable types:
-      - ingest_date  : STRING   (partition)
-      - run_ts       : STRING   (partition)
-      - ingest_ts_utc: TIMESTAMP
-      - source_table : STRING
-    This guards against schema drift across batches.
+    Guardrails: keep our 4 system columns stable across runs to avoid drift.
+      - ingest_date   : STRING   (partition)
+      - run_ts        : STRING   (partition)
+      - ingest_ts_utc : TIMESTAMP
+      - source_table  : STRING
     """
     return (
         df.withColumn("ingest_date", F.col("ingest_date").cast("string"))
@@ -329,30 +298,27 @@ def write_raw(df: DataFrame, table: str) -> str:
     Append Parquet files into the RAW Volume, partitioned by (ingest_date, run_ts).
 
     Layout:
-      {RAW_SOURCE_DIR}/{table}/
+      {RAW_VOLUME}/{table}/
         └── ingest_date=YYYY-MM-DD/
             └── run_ts=HHMMSS/
                 └── part-*.snappy.parquet
-
-    Notes:
-      • We do **not** create a UC table; we just write files.
-      • This is Serverless-friendly: UC Volume’s storage credential handles S3 IO.
-      • Auto Loader (RAW → BRONZE) can point at {RAW_SOURCE_DIR}/{table}.
     """
-    target_dir = _ensure_table_dir(table)
+    target_dir = f"{RAW_VOLUME}/{table}"
 
-    (df.coalesce(WRITE_PARTS)
-       .write
-       .format("parquet")
-       .mode("append")
-       .partitionBy("ingest_date", "run_ts")
-       .save(target_dir))
+    (_normalize_system_cols(df)
+        .coalesce(WRITE_PARTS)
+        .write
+        .format("parquet")
+        .mode("append")
+        .partitionBy("ingest_date", "run_ts")
+        .save(target_dir))
 
     return f"files://{target_dir}"
 
-# ------------------------------------------------------------------------------
-# CURSOR ADVANCEMENT (DataFrame-only ops)
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 6) CURSOR ADVANCEMENT
+# ──────────────────────────────────────────────────────────────────────────────
+
 def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Optional[int] = None) -> Optional[str]:
     """
     Compute the maximum observed change timestamp across change_cols.
@@ -372,7 +338,7 @@ def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Opt
     if not max_ts:
         return None
 
-    # Normalize to BigQuery-friendly TIMESTAMP string
+    # Normalize to a BigQuery-friendly TIMESTAMP string
     if hasattr(max_ts, "strftime"):
         return max_ts.strftime("%Y-%m-%d %H:%M:%S+00")
     s = str(max_ts).replace("T", " ")
@@ -382,15 +348,12 @@ def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Opt
         s = s + "+00"
     return s
 
-# ------------------------------------------------------------------------------
-# MAIN INGEST LOOP
-# ------------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# 7) MAIN LOOP
+# ──────────────────────────────────────────────────────────────────────────────
+
 def main():
     results = []
-
-    # Ensure the base directories exist (especially _state)
-    _ensure_dir(RAW_SOURCE_DIR)
-    _ensure_state_dir()
 
     for table, cfg in TABLES.items():
         change_cols      = cfg["change_cols"]
@@ -400,7 +363,7 @@ def main():
 
         print(f"\n=== Ingesting: {table} ===")
 
-        # 0) Per-table cadence gate: skip if not yet due
+        # A) Per-table cadence gate
         if not _is_due(table, cadence_minutes):
             last = _get_last_run_utc(table)
             mins_since = int((_now_utc() - last).total_seconds() / 60) if last else 0
@@ -409,65 +372,35 @@ def main():
                             "cadence_min": cadence_minutes, "mins_since": mins_since})
             continue
 
-        # A) Dims WITHOUT change columns → FULL SNAPSHOT when due
-        if is_dim and len(change_cols) == 0:
-            df = (
-                spark.read.format("bigquery")
-                .option("parentProject", PROJECT_ID)
-                .options(**BQ_AUTH)
-                .option("table", _bq_table_id(table))
-                .load()
-                # Add lineage & partition columns expected by the RAW files layout
-                .withColumn("ingest_date", F.lit(TODAY))
-                .withColumn("run_ts", F.lit(RUN_TS))
-                .withColumn("ingest_ts_utc", F.current_timestamp())
-                .withColumn("source_table", F.lit(table))
-            )
+        # B) Read from BigQuery (filtered when we have change columns)
+        cursor = load_cursor(table)  # None on first run
+        df = bq_read_filtered(table, change_cols, grace_minutes, cursor)
 
-            n = df.count()
-            if n == 0:
-                print(f"{table}: no rows (full snapshot).")
-                results.append({"table": table, "status": "no_data"})
-                mark_dim_snapshot(table, 0)  # still stamp last_run so cadence gating works
-                continue
-
-            dest = write_raw(_normalize_system_cols(df), table)
-            print(f"{table}: full snapshot wrote {n} rows → {dest}")
-            mark_dim_snapshot(table, n)
-            results.append({"table": table, "status": "ok_fullpull", "rows": n})
-            continue
-
-        # B) Facts or Dims WITH change columns → incremental micro-batch
-        cursor = load_cursor(table)  # (None if first run)
-
-        df = (
-            bq_read_filtered(
-                table=table,
-                change_cols=change_cols,
-                grace_minutes=grace_minutes,
-                cursor=cursor
-            )
-            # Add lineage & partition columns expected by the RAW files layout
-            .withColumn("ingest_date", F.lit(TODAY))
-            .withColumn("run_ts", F.lit(RUN_TS))
-            .withColumn("ingest_ts_utc", F.current_timestamp())
-            .withColumn("source_table", F.lit(table))
+        # Add RAW lineage/partition columns expected in our file layout
+        df = (df
+              .withColumn("ingest_date", F.lit(TODAY))
+              .withColumn("run_ts", F.lit(RUN_TS))
+              .withColumn("ingest_ts_utc", F.current_timestamp())
+              .withColumn("source_table", F.lit(table))
         )
 
-        # Materialize & check emptiness (single action)
+        # C) Materialize and check emptiness (single action)
         n = df.count()
         if n == 0:
             print(f"{table}: no new rows; cursor unchanged.")
-            # still stamp last_run to honor cadence even when empty runs occur
-            mark_dim_snapshot(table, 0) if is_dim else save_cursor(table, cursor or "1970-01-01 00:00:00+00", 0)
+            # Still stamp last_run so cadence continues to work
+            if is_dim:
+                mark_dim_snapshot(table, 0)
+            else:
+                save_cursor(table, cursor or "1970-01-01 00:00:00+00", 0)
             results.append({"table": table, "status": "no_data"})
             continue
 
-        # Write RAW files into the Volume
-        dest = write_raw(_normalize_system_cols(df), table)
+        # D) Write RAW files (append-only)
+        dest = write_raw(df, table)
         print(f"{table}: wrote {n} rows → {dest}")
 
-        # Advance cursor — cap at "now" so saved cursor is never future-dated
+        # E) Advance cursor — cap at "now" so we never save a future time
         max_str = compute_max_ts(df, change_cols, precomputed_count=n)
         if max_str:
             now_utc = _now_utc()
@@ -478,15 +411,13 @@ def main():
             results.append({"table": table, "status": "ok", "rows": n,
                             "cursor": capped.strftime("%Y-%m-%d %H:%M:%S+00")})
         else:
-            # No max change → still stamp last_run for cadence, without cursor move
+            # No max change → just stamp last_run (keeps cadence moving)
             save_cursor(table, cursor or "1970-01-01 00:00:00+00", n)
             results.append({"table": table, "status": "ok_no_cursor", "rows": n})
 
-    # ------------------------------------------------------------------------------
-    # OPTIONAL: quick visibility check for today's partition in RAW files
-    # ------------------------------------------------------------------------------
+    # F) Optional quick visibility check for today's partition in one table
     try:
-        raw_users_dir = f"{RAW_SOURCE_DIR}/users"
+        raw_users_dir = f"{RAW_VOLUME}/users"
         cnt = (spark.read.option("mergeSchema", "true")
                       .parquet(raw_users_dir)
                       .where(F.col("ingest_date") == TODAY)
@@ -497,6 +428,6 @@ def main():
 
     print("\nSummary:", results)
 
-# If you'd like to allow `spark-submit ...` execution:
+# Allow `spark-submit` or Databricks job “Python script” entrypoint
 if __name__ == "__main__":
     main()
