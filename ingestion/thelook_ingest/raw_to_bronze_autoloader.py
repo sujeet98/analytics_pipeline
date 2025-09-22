@@ -144,3 +144,43 @@ def run_one_table(table: str):
              .option("cloudFiles.includeExistingFiles", INCLUDE_EXISTING_FILES)
              .option("cloudFiles.partitionColumns", "ingest_date,run_ts")
              .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
+             # We’re reading from a UC Volume path, so no S3 creds/IAM needed on Serverless.
+    )
+
+    # Auto Loader recursively discovers partitioned subfolders
+    df_raw = reader.load(raw_root)
+
+    # Bronze is a faithful copy (plus type hygiene for the 4 system cols)
+    df_bronze = normalize_system_cols(df_raw)
+
+    # Write stream to a UC managed table:
+    # - checkpointLocation: tracks progress → exactly-once semantics across runs
+    # - mergeSchema=true  : allow new columns to be added
+    # - trigger(availableNow=True): process outstanding data and exit
+    query = (
+        df_bronze.writeStream
+                 .option("checkpointLocation", checkpoint)
+                 .option("mergeSchema", "true")
+                 .trigger(availableNow=True)
+                 .toTable(target_tbl)   # creates the managed table if missing
+    )
+
+    query.awaitTermination()
+    print(f"{table}: Auto Loader availableNow run completed.")
+
+
+# ---------------------------------------
+# 4) Run all tables sequentially
+# ---------------------------------------
+if __name__ == "__main__":
+    # Optional small tuning for tiny clusters to save cost
+    spark.conf.set("spark.sql.shuffle.partitions", "64")
+
+    # Make sure the base metadata folders exist
+    _ensure_dir(SCHEMA_BASE)
+    _ensure_dir(CHECKPT_BASE)
+
+    for t in TABLES:
+        run_one_table(t)
+
+    print("\nAll tables processed.")
