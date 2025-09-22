@@ -1,0 +1,19 @@
+version: 2
+
+sources:
+  - name: thelook_raw
+    description: "UC RAW external parquet tables ingested from BigQuery (append-only)"
+    database: sujeet_data_analytics_workspace
+    schema: raw
+    loader: databricks_jobs
+    freshness:
+      warn_after: {count: 1, period: day}
+      error_after: {count: 2, period: day}
+    tables:
+      - name: orders
+      - name: order_items
+      - name: products
+      - name: users
+      - name: events
+      - name: inventory_items
+      - name: distribution_centers

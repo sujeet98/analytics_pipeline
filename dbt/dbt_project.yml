@@ -1,0 +1,24 @@
+name: thelook_uc
+version: 1.0.0
+profile: thelook_profile
+
+models:
+  thelook_uc:
+    +persist_docs: {relation: true, columns: true}
+    staging:
+      +schema: "bronze_{{ target.name }}"
+      +materialized: view
+    intermediate:
+      +schema: "silver_{{ target.name }}"
+      +materialized: view
+    marts:
+      +schema: "gold_{{ target.name }}"
+      +materialized: table
+
+seeds: {}
+macros: {}
+
+quoting:
+  database: false
+  schema: false
+  identifier: false

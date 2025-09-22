@@ -1,0 +1,16 @@
+models:
+  - name: stg_thelook__orders
+    description: "Staging model for thelook.orders."
+    columns:
+      - name: order_id
+        description: "The unique identifier for each order."
+        data_tests:
+          - not_null
+      - name: user_id
+        description: "The unique identifier for the user who placed the order."
+        data_tests:
+          - not_null
+      - name: created_at
+        description: "The timestamp when the order was created."
+        data_tests:
+          - not_null
