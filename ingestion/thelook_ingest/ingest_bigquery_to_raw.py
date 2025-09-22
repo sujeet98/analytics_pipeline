@@ -1,21 +1,20 @@
-# 01_ingest_bigquery_raw_incremental_v10_uc.py
+# 01_ingest_bigquery_raw_incremental_v10_volume.py
 #
 # ------------------------------------------------------------------------------
 # OVERVIEW
 # ------------------------------------------------------------------------------
 # PURPOSE
 #   Incrementally ingest BigQuery public dataset
-#   `bigquery-public-data.thelook_ecommerce` into an immutable RAW layer on S3,
-#   using Databricks (AWS) with Unity Catalog (UC).
+#   `bigquery-public-data.thelook_ecommerce` into an immutable RAW **files**
+#   layer on S3, accessed through a **Unity Catalog Volume** (so it works on
+#   Serverless without instance profiles or NAT).
 #
-# WRITING MODE (Option B - UC external tables)
-#   • Instead of writing directly to s3a:// paths, we append into UC external
-#     Parquet tables (one table per source table) that point at:
-#       s3://{BUCKET}/{RAW_PREFIX}/{table}
-#   • On the first write we auto-create the UC table (external, partitioned by
-#     (ingest_date, run_ts)); on subsequent runs we `insertInto` the table.
-#   • This routes S3 access through your **UC storage credential** (no instance
-#     profile on the cluster required) while preserving immutable partitions.
+# WRITING MODE (Volume files; no UC tables)
+#   • We write Parquet **files** into a UC External Volume path:
+#       /Volumes/{UC_CATALOG}/raw/raw_files/{table}
+#   • Files are partitioned by (ingest_date, run_ts) and are **append-only**.
+#   • Cursor/state JSON is also stored under the Volume (/.../_state/{table}.json).
+#   • Downstream (Auto Loader → Bronze) reads from the same Volume path.
 #
 # INCREMENTAL LOGIC (unchanged)
 #   • Per-table cadence gate: only run when the table’s `run_every_minutes` has
@@ -35,18 +34,21 @@
 #   • Schedule this job every 10 minutes (max concurrent runs = 1).
 #   • UC permissions required:
 #       - USE CATALOG on your UC catalog
-#       - USE/CREATE TABLE on the target schema
-#       - CREATE EXTERNAL TABLE on your External Location (e.g., raw_thelook)
+#       - USE SCHEMA on `raw`
+#       - READ FILES / WRITE FILES on the external **Volume** (e.g., raw.raw_files)
 # ------------------------------------------------------------------------------
 
-import datetime, json, uuid
+import os, datetime, json, uuid
 from typing import Optional, List, Dict
+
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
 from pyspark.dbutils import DBUtils
+
 from .config import (
-    get_project, get_bq_auth_options, get_bucket, get_raw_prefix, get_uc_catalog
+    get_project, get_bq_auth_options, get_uc_catalog
+    # NOTE: get_bucket/get_raw_prefix are no longer needed when using Volumes
 )
 
 # ------------------------------------------------------------------------------
@@ -54,16 +56,21 @@ from .config import (
 # ------------------------------------------------------------------------------
 PROJECT_ID = get_project()                 # GCP project billed for BigQuery reads
 BQ_AUTH    = get_bq_auth_options()         # Spark–BigQuery connector auth dict
-BUCKET     = get_bucket()                  # Destination S3 bucket (UC external location covers this)
-RAW_PREFIX = get_raw_prefix()              # e.g. "raw/thelook"
 UC_CATALOG = get_uc_catalog()              # e.g. "sujeet_data_analytics_workspace"
+
+# Volume that points at s3://analyticsbucketdev-sk/raw via your external location
+# Change the volume name if you used something other than 'raw_files'.
+RAW_VOLUME = os.getenv(
+    "RAW_VOLUME_PATH",
+    f"/Volumes/{UC_CATALOG}/raw/raw_files"
+)
 
 # Global run metadata (UTC for reproducibility)
 TODAY  = datetime.date.today().isoformat()                               # "YYYY-MM-DD"
 RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S") # "HHMMSS" (UTC)
 
-# State files remain in S3 (simple JSON per table)
-STATE_PREFIX = f"s3a://{BUCKET}/{RAW_PREFIX}/_state"
+# State files are simple JSON per table, persisted in the Volume (not s3a://)
+STATE_PREFIX = f"{RAW_VOLUME}/_state"
 
 # Output file sizing (coalesce reduces partitions; never increases)
 WRITE_PARTS = 32
@@ -72,7 +79,7 @@ WRITE_PARTS = 32
 INCLUDE_NULLS_ON_FIRST_RUN = True
 
 # Recommended Spark settings (idempotent; set here for clarity)
-spark = SparkSession.builder.appName("thelook-bq-to-raw").getOrCreate()
+spark = SparkSession.builder.appName("thelook-bq-to-raw-volume").getOrCreate()
 spark.conf.set("spark.sql.session.timeZone", "UTC")
 spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
 
@@ -106,17 +113,12 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 def _state_path(table: str) -> str:
-    """S3 path for this table's state JSON (cursor, last run markers, etc.)."""
+    """Volume path for this table's state JSON (cursor, last run markers, etc.)."""
     return f"{STATE_PREFIX}/{table}.json"
 
 def _bq_table_id(table: str) -> str:
     """BigQuery table identifier (no SQL)."""
     return f"bigquery-public-data.thelook_ecommerce.{table}"
-
-def _uc_full_table(table: str) -> str:
-    """Fully qualified UC table name we append to (external Parquet table)."""
-    # We keep one schema named 'raw' inside the chosen UC catalog
-    return f"{UC_CATALOG}.raw.{table}"
 
 # ---- State I/O (cursor + cadence markers) ------------------------------------
 def _load_state_blob(table: str) -> Optional[dict]:
@@ -271,17 +273,16 @@ def bq_read_filtered(table: str,
     return df if cond is None else df.filter(cond)
 
 # ------------------------------------------------------------------------------
-# RAW WRITE via UC tables (external Parquet; no direct s3a:// writes)
+# RAW WRITE via UC Volume (external files; no tables)
 # ------------------------------------------------------------------------------
-
 def _normalize_system_cols(df: DataFrame) -> DataFrame:
     """
-    Make sure our 4 system columns always have stable types:
-      - ingest_date : STRING   (partition)
-      - run_ts      : STRING   (partition)
+    Ensure our 4 system columns always have stable types:
+      - ingest_date  : STRING   (partition)
+      - run_ts       : STRING   (partition)
       - ingest_ts_utc: TIMESTAMP
-      - source_table: STRING
-    This prevents 'incompatible cast' errors when appending to existing UC tables.
+      - source_table : STRING
+    This guards against schema drift across batches.
     """
     return (
         df.withColumn("ingest_date", F.col("ingest_date").cast("string"))
@@ -290,68 +291,31 @@ def _normalize_system_cols(df: DataFrame) -> DataFrame:
           .withColumn("source_table", F.col("source_table").cast("string"))
     )
 
-def _align_to_table_schema(df: DataFrame, full_table: str) -> DataFrame:
-    """
-    Reorder & cast the DataFrame columns to exactly match the UC table schema.
-    This avoids 'Cannot safely cast' errors that happen because insertInto()
-    is position-based (not name-based) and strict about types.
-    """
-    tbl_schema = spark.table(full_table).schema
-    out = df
-    # Ensure every table column exists and has the correct type
-    for f in tbl_schema:
-        if f.name in out.columns:
-            # Cast if types differ (e.g., string -> timestamp)
-            if out.schema[f.name].dataType != f.dataType:
-                out = out.withColumn(f.name, F.col(f.name).cast(f.dataType.simpleString()))
-        else:
-            # Add missing column as NULL of the right type
-            out = out.withColumn(f.name, F.lit(None).cast(f.dataType.simpleString()))
-    # Drop any extra DF cols and reorder to table order
-    return out.select([F.col(f.name) for f in tbl_schema])
-
 def write_raw(df: DataFrame, table: str) -> str:
     """
-    Append into a UC external Parquet table partitioned by (ingest_date, run_ts).
+    Append Parquet files into the RAW Volume, partitioned by (ingest_date, run_ts).
 
-    • First run:
-        - CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw
-        - WRITE DataFrame with `.saveAsTable(full_table)` and
-          `.option("path", "s3://{bucket}/{raw_prefix}/{table}")`
-          so UC registers an external table at that path.
-    • Later runs:
-        - `.insertInto(full_table)` to append.
+    Layout:
+      {RAW_VOLUME}/{table}/
+        └── ingest_date=YYYY-MM-DD/
+            └── run_ts=HHMMSS/
+                └── part-*.snappy.parquet
 
-    This keeps immutable, discoverable partitions while routing I/O
-    through the UC storage credential (no instance profile needed).
+    Notes:
+      • We do **not** create a UC table; we just write files.
+      • This is Serverless-friendly: UC Volume’s storage credential handles S3 IO.
+      • Auto Loader (RAW → BRONZE) can point at {RAW_VOLUME}/{table}.
     """
-    full_table = _uc_full_table(table)
-    table_path = f"s3://{BUCKET}/{RAW_PREFIX}/{table}"   # UC expects s3://, not s3a://
+    target_dir = f"{RAW_VOLUME}/{table}"
 
-    df = _normalize_system_cols(df) # enforce stable types of system columns
+    (df.coalesce(WRITE_PARTS)
+       .write
+       .format("parquet")
+       .mode("append")
+       .partitionBy("ingest_date", "run_ts")
+       .save(target_dir))
 
-    # Ensure the target schema exists (idempotent; runs fast if already present)
-    spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{UC_CATALOG}`.raw")
-
-    if not spark.catalog.tableExists(full_table):
-        # First write: create the external table with DF schema + partitions.
-        (df.coalesce(WRITE_PARTS)
-           .write
-           .format("parquet")
-           .mode("append")
-           .option("path", table_path)
-           .partitionBy("ingest_date", "run_ts")
-           .saveAsTable(full_table))
-    else:
-        # ✅ Align DF to table schema (names & types) before position-based insert
-        aligned = _align_to_table_schema(df, full_table)
-        (aligned.coalesce(WRITE_PARTS)
-               .write
-               .format("parquet")
-               .mode("append")
-               .insertInto(full_table))
-
-    return f"table://{full_table}"
+    return f"files://{target_dir}"
 
 # ------------------------------------------------------------------------------
 # CURSOR ADVANCEMENT (DataFrame-only ops)
@@ -416,7 +380,7 @@ def main():
                 .options(**BQ_AUTH)
                 .option("table", _bq_table_id(table))
                 .load()
-                # Add lineage & partition columns expected by UC table
+                # Add lineage & partition columns expected by the RAW files layout
                 .withColumn("ingest_date", F.lit(TODAY))
                 .withColumn("run_ts", F.lit(RUN_TS))
                 .withColumn("ingest_ts_utc", F.current_timestamp())
@@ -430,7 +394,7 @@ def main():
                 mark_dim_snapshot(table, 0)  # still stamp last_run so cadence gating works
                 continue
 
-            dest = write_raw(df, table)
+            dest = write_raw(_normalize_system_cols(df), table)
             print(f"{table}: full snapshot wrote {n} rows → {dest}")
             mark_dim_snapshot(table, n)
             results.append({"table": table, "status": "ok_fullpull", "rows": n})
@@ -446,7 +410,7 @@ def main():
                 grace_minutes=grace_minutes,
                 cursor=cursor
             )
-            # Add lineage & partition columns expected by UC table
+            # Add lineage & partition columns expected by the RAW files layout
             .withColumn("ingest_date", F.lit(TODAY))
             .withColumn("run_ts", F.lit(RUN_TS))
             .withColumn("ingest_ts_utc", F.current_timestamp())
@@ -462,8 +426,8 @@ def main():
             results.append({"table": table, "status": "no_data"})
             continue
 
-        # Write RAW via UC external table
-        dest = write_raw(df, table)
+        # Write RAW files into the Volume
+        dest = write_raw(_normalize_system_cols(df), table)
         print(f"{table}: wrote {n} rows → {dest}")
 
         # Advance cursor — cap at "now" so saved cursor is never future-dated
@@ -482,13 +446,20 @@ def main():
             results.append({"table": table, "status": "ok_no_cursor", "rows": n})
 
     # ------------------------------------------------------------------------------
-    # OPTIONAL: quick visibility check for today's partition in UC table
+    # OPTIONAL: quick visibility check for today's partition in RAW files
     # ------------------------------------------------------------------------------
     try:
-        users_tbl = _uc_full_table("users")
-        cnt = spark.table(users_tbl).where(F.col("ingest_date") == TODAY).count()
-        print(f"Users rows ingested today: {cnt} (table: {users_tbl})")
+        raw_users_dir = f"{RAW_VOLUME}/users"
+        cnt = (spark.read.option("mergeSchema", "true")
+                      .parquet(raw_users_dir)
+                      .where(F.col("ingest_date") == TODAY)
+                      .count())
+        print(f"Users rows ingested today: {cnt} (path: {raw_users_dir})")
     except Exception as e:
         print(f"Visibility check error (non-fatal): {e}")
 
     print("\nSummary:", results)
+
+# If you'd like to allow `spark-submit ...` execution:
+if __name__ == "__main__":
+    main()
