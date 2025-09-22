@@ -9,14 +9,23 @@
 #   layer on S3, accessed through a **Unity Catalog Volume** (so it works on
 #   Serverless without instance profiles or NAT).
 #
-# WRITING MODE (Volume files; no UC tables)
-#   • We write Parquet **files** into a UC External Volume path:
-#       /Volumes/{UC_CATALOG}/raw/raw_files/{table}
-#   • Files are partitioned by (ingest_date, run_ts) and are **append-only**.
-#   • Cursor/state JSON is also stored under the Volume (/.../_state/{table}.json).
-#   • Downstream (Auto Loader → Bronze) reads from the same Volume path.
+# WHY VOLUMES?
+#   • UC Volumes encapsulate S3 access via a UC Storage Credential + External
+#     Location. This means your jobs (including Serverless) do not need IAM
+#     instance profiles and you avoid NAT costs/complexity.
+#   • We write **files** (Parquet) instead of UC external tables at RAW, which
+#     is a common landing zone pattern. Auto Loader will pick these up and load
+#     Bronze tables (managed Delta) inside UC.
 #
-# INCREMENTAL LOGIC (unchanged)
+# LAYOUT (namespaced by source)
+#   /Volumes/{CATALOG}/raw/raw_files/{SOURCE}/
+#     ├── _state/                # per-table cursor/state JSON files
+#     ├── orders/                # per-table append-only Parquet
+#     │   └── ingest_date=YYYY-MM-DD/run_ts=HHMMSS/part-*.snappy.parquet
+#     ├── order_items/...
+#     └── users/...
+#
+# INCREMENTAL LOGIC
 #   • Per-table cadence gate: only run when the table’s `run_every_minutes` has
 #     elapsed since last success.
 #   • Lower bound (LB) = max(epoch, min(cursor, now) - grace_minutes).
@@ -32,10 +41,11 @@
 #
 # OPERATION
 #   • Schedule this job every 10 minutes (max concurrent runs = 1).
-#   • UC permissions required:
+#   • UC permissions required for the principal running the job:
 #       - USE CATALOG on your UC catalog
-#       - USE SCHEMA on `raw`
+#       - USE SCHEMA on the `raw` schema
 #       - READ FILES / WRITE FILES on the external **Volume** (e.g., raw.raw_files)
+#   • No instance profile / NAT required when using Serverless + Volumes.
 # ------------------------------------------------------------------------------
 
 import os, datetime, json, uuid
@@ -48,32 +58,38 @@ from pyspark.dbutils import DBUtils
 
 from .config import (
     get_project, get_bq_auth_options, get_uc_catalog
-    # NOTE: get_bucket/get_raw_prefix are no longer needed when using Volumes
+    # Note: bucket/prefix not needed with Volumes
 )
 
 # ------------------------------------------------------------------------------
-# ENVIRONMENT
+# ENVIRONMENT / PATHS
 # ------------------------------------------------------------------------------
 PROJECT_ID = get_project()                 # GCP project billed for BigQuery reads
 BQ_AUTH    = get_bq_auth_options()         # Spark–BigQuery connector auth dict
-UC_CATALOG = get_uc_catalog()              # e.g. "sujeet_data_analytics_workspace"
+UC_CATALOG = get_uc_catalog()              # e.g., "sujeet_data_analytics_workspace"
 
-# Volume that points at s3://analyticsbucketdev-sk/raw via your external location
-# Change the volume name if you used something other than 'raw_files'.
-RAW_VOLUME = os.getenv(
+# Root of the RAW files Volume (backed by your external location / S3 path)
+RAW_ROOT = os.getenv(
     "RAW_VOLUME_PATH",
     f"/Volumes/{UC_CATALOG}/raw/raw_files"
 )
 
-# Global run metadata (UTC for reproducibility)
-TODAY  = datetime.date.today().isoformat()                               # "YYYY-MM-DD"
-RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S") # "HHMMSS" (UTC)
+# Source namespace under RAW (lets you add more sources later without collision)
+# Example: thelook, stripe, salesforce, etc.
+SOURCE_NAME = os.getenv("SOURCE_NAME", "thelook")
 
-# State files are simple JSON per table, persisted in the Volume (not s3a://)
-STATE_PREFIX = f"{RAW_VOLUME}/_state"
+# All files and state for this source will live under RAW_SOURCE_DIR
+RAW_SOURCE_DIR = f"{RAW_ROOT}/{SOURCE_NAME}"     # e.g., /Volumes/<CAT>/raw/raw_files/thelook
+
+# Per-table state (cursor & last_run metadata) is tracked in JSON files here
+STATE_PREFIX = f"{RAW_SOURCE_DIR}/_state"
+
+# Global run metadata (UTC for reproducibility)
+TODAY  = datetime.date.today().isoformat()                                # "YYYY-MM-DD"
+RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S")  # "HHMMSS" (UTC)
 
 # Output file sizing (coalesce reduces partitions; never increases)
-WRITE_PARTS = 32
+WRITE_PARTS = int(os.getenv("WRITE_PARTS", "32"))
 
 # Include NULL change timestamps on the very first run?
 INCLUDE_NULLS_ON_FIRST_RUN = True
@@ -84,25 +100,25 @@ spark.conf.set("spark.sql.session.timeZone", "UTC")
 spark.conf.set("spark.sql.parquet.compression.codec", "snappy")
 
 # ------------------------------------------------------------------------------
-# TABLE CONFIGURATION
+# TABLE CONFIGURATION (cadence & change columns)
 # ------------------------------------------------------------------------------
 TABLES: Dict[str, Dict] = {
-  # Facts (two cadence buckets for illustration)
-  "orders":        {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
-                    "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
-  "order_items":   {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
-                    "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
+    # Facts (two cadence buckets for illustration)
+    "orders":        {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+                      "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
+    "order_items":   {"change_cols": ["created_at","shipped_at","delivered_at","returned_at"],
+                      "grace_minutes": 90, "run_every_minutes": 10, "is_dim": False},
 
-  "events":        {"change_cols": ["created_at"],
-                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-  "inventory_items":{"change_cols": ["created_at","sold_at"],
-                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
-  "users":         {"change_cols": ["created_at"],
-                    "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+    "events":        {"change_cols": ["created_at"],
+                      "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+    "inventory_items":{"change_cols": ["created_at","sold_at"],
+                      "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
+    "users":         {"change_cols": ["created_at"],
+                      "grace_minutes": 60, "run_every_minutes": 20, "is_dim": False},
 
-  # Dims: no change columns → full snapshot every 6 hours (360 min)
-  "products":              {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
-  "distribution_centers":  {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+    # Dims: no change columns → full snapshot every 6 hours (360 min)
+    "products":              {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
+    "distribution_centers":  {"change_cols": [], "grace_minutes": 0, "run_every_minutes": 360, "is_dim": True},
 }
 
 # ------------------------------------------------------------------------------
@@ -119,6 +135,25 @@ def _state_path(table: str) -> str:
 def _bq_table_id(table: str) -> str:
     """BigQuery table identifier (no SQL)."""
     return f"bigquery-public-data.thelook_ecommerce.{table}"
+
+def _ensure_dir(path: str) -> None:
+    """Create a directory in the Volume if it doesn't exist (idempotent)."""
+    try:
+        dbutils = DBUtils(spark)
+        dbutils.fs.mkdirs(path)
+    except Exception:
+        # Silently ignore; mkdirs is idempotent and Volume permissions might be read-only in some tests.
+        pass
+
+def _ensure_state_dir() -> None:
+    """Ensure the per-source _state directory exists."""
+    _ensure_dir(STATE_PREFIX)
+
+def _ensure_table_dir(table: str) -> str:
+    """Ensure the per-table directory exists and return it."""
+    target_dir = f"{RAW_SOURCE_DIR}/{table}"
+    _ensure_dir(target_dir)
+    return target_dir
 
 # ---- State I/O (cursor + cadence markers) ------------------------------------
 def _load_state_blob(table: str) -> Optional[dict]:
@@ -162,6 +197,7 @@ def _is_due(table: str, cadence_minutes: int) -> bool:
 
 def save_cursor(table: str, cursor_str: str, rows: int) -> None:
     """Persist the new cursor + minimal metadata (atomic write via tmp + mv)."""
+    _ensure_state_dir()
     dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {
@@ -180,6 +216,7 @@ def mark_dim_snapshot(table: str, rows: int) -> None:
     For dimensions without change columns, simply record the last snapshot time.
     (We don’t store a cursor for full-snapshot dims.)
     """
+    _ensure_state_dir()
     dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {"table": table, "rows_last_batch": rows, "last_run_utc": now_iso}
@@ -207,10 +244,6 @@ def _compute_lower_bound(cursor: Optional[str], grace_minutes: int = 0) -> datet
 
       First run  → LB = epoch
       Otherwise  → LB = max(epoch, min(cursor, now_utc) - grace_minutes)
-
-    Why:
-      • Minute-level windows fit 5–20 min micro-batches.
-      • Cursor is capped at 'now' to avoid future LBs (source may have future-dated rows).
     """
     epoch   = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
     now_utc = _now_utc()
@@ -296,7 +329,7 @@ def write_raw(df: DataFrame, table: str) -> str:
     Append Parquet files into the RAW Volume, partitioned by (ingest_date, run_ts).
 
     Layout:
-      {RAW_VOLUME}/{table}/
+      {RAW_SOURCE_DIR}/{table}/
         └── ingest_date=YYYY-MM-DD/
             └── run_ts=HHMMSS/
                 └── part-*.snappy.parquet
@@ -304,9 +337,9 @@ def write_raw(df: DataFrame, table: str) -> str:
     Notes:
       • We do **not** create a UC table; we just write files.
       • This is Serverless-friendly: UC Volume’s storage credential handles S3 IO.
-      • Auto Loader (RAW → BRONZE) can point at {RAW_VOLUME}/{table}.
+      • Auto Loader (RAW → BRONZE) can point at {RAW_SOURCE_DIR}/{table}.
     """
-    target_dir = f"{RAW_VOLUME}/{table}"
+    target_dir = _ensure_table_dir(table)
 
     (df.coalesce(WRITE_PARTS)
        .write
@@ -354,6 +387,10 @@ def compute_max_ts(df: DataFrame, change_cols: List[str], precomputed_count: Opt
 # ------------------------------------------------------------------------------
 def main():
     results = []
+
+    # Ensure the base directories exist (especially _state)
+    _ensure_dir(RAW_SOURCE_DIR)
+    _ensure_state_dir()
 
     for table, cfg in TABLES.items():
         change_cols      = cfg["change_cols"]
@@ -449,7 +486,7 @@ def main():
     # OPTIONAL: quick visibility check for today's partition in RAW files
     # ------------------------------------------------------------------------------
     try:
-        raw_users_dir = f"{RAW_VOLUME}/users"
+        raw_users_dir = f"{RAW_SOURCE_DIR}/users"
         cnt = (spark.read.option("mergeSchema", "true")
                       .parquet(raw_users_dir)
                       .where(F.col("ingest_date") == TODAY)
