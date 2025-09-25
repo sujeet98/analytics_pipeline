@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: look
+    database: '{{ var("catalog_name") }}'
+    schema: '{{ var("bronze_schema") }}'
+    tables:
+      - name: orders
+        identifier: orders
+        loaded_at_field: ingest_ts_utc
+        freshness: { warn_after: {count: 48, period: hour}, error_after: {count: 96, period: hour} }
+      - name: order_items
+        identifier: order_items
+        loaded_at_field: ingest_ts_utc
+        freshness: { warn_after: {count: 48, period: hour}, error_after: {count: 96, period: hour} }
+      - name: events
+        identifier: events
+        loaded_at_field: ingest_ts_utc
+      - name: inventory_items
+        identifier: inventory_items
+        loaded_at_field: ingest_ts_utc
+      - name: products
+        identifier: products
+        loaded_at_field: ingest_ts_utc
+      - name: distribution_centers
+        identifier: distribution_centers
+        loaded_at_field: ingest_ts_utc
+      - name: users
+        identifier: users
+        loaded_at_field: ingest_ts_utc

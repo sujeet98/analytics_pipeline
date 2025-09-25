@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: int_order_items_enriched
+    description: Enrich order_items with product & inventory costs and DC. Ephemeral.
+    columns:
+      - name: order_item_id
+        tests: [not_null, unique]
+
+  - name: int_orders_aggregated_from_items
+    description: Aggregate enriched order_items to order grain with revenue/cost/margin and SLAs. Ephemeral.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]

@@ -1,24 +1,43 @@
-name: thelook_uc
-version: 1.0.0
-profile: thelook_profile
+name: 'look_dbt'
+version: '1.1.0'
+config-version: 2
 
-models:
-  thelook_uc:
-    +persist_docs: {relation: true, columns: true}
-    staging:
-      +schema: "bronze_{{ target.name }}"
-      +materialized: view
-    intermediate:
-      +schema: "silver_{{ target.name }}"
-      +materialized: view
-    marts:
-      +schema: "gold_{{ target.name }}"
-      +materialized: table
+profile: 'look_dbt'
 
-seeds: {}
-macros: {}
+model-paths: ['models']
+macro-paths: ['macros']
+seed-paths: ['seeds']
+analysis-paths: ['analyses']
 
 quoting:
   database: false
   schema: false
   identifier: false
+
+vars:
+  catalog_name: 'sujeet_data_analytics_workspace'
+  bronze_schema: 'bronze_dev'
+  silver_schema: 'silver_dev'
+  gold_schema: 'gold_dev'
+
+models:
+  +on_schema_change: append_new_columns
+  +persist_docs: { relation: true, columns: true }
+
+  look_dbt:
+    staging:
+      +schema: '{{ var("silver_schema") }}'
+      +materialized: view
+      look:
+        +schema: '{{ var("silver_schema") }}'
+
+    intermediate:
+      +materialized: ephemeral
+      commerce:
+        +schema: '{{ var("silver_schema") }}'
+
+    marts:
+      +schema: '{{ var("gold_schema") }}'
+      +materialized: table
+      core:
+        +schema: '{{ var("gold_schema") }}'
