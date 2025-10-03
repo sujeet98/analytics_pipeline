@@ -1,50 +1,50 @@
-name: 'look_dbt'                 # canonical name of the project (used in selectors)
-version: '1.1.0'                 # your semver (purely informational to dbt)
-config-version: 2                # dbt’s project schema version
+name: 'look_dbt'
+version: '1.1.0'
+config-version: 2
 
-profile: 'look_dbt'              # MUST match a profile in ~/.dbt/profiles.yml
+profile: 'look_dbt'
 
-model-paths: ['models']          # where dbt scans for model .sql files
-macro-paths: ['macros']          # where dbt scans for Jinja macros
-seed-paths: ['seeds']            # static CSV lookup tables
-analysis-paths: ['analyses']     # saved queries (not built)
-snapshot-paths: ['snapshots']    # SCD2 definitions
-test-paths: ['tests']            # custom tests & unit tests
+model-paths: ['models']
+macro-paths: ['macros']
+seed-paths: ['seeds']
+analysis-paths: ['analyses']
+snapshot-paths: ['snapshots']
+test-paths: ['tests']
 
-quoting:                          # don’t quote identifiers unless we must
+quoting:
   database: false
   schema: false
   identifier: false
 
-vars:                             # reusable variables (nice for cross-env portability)
+# ⬇️ TOP-LEVEL vars (same indentation as `models:`)
+vars:
   catalog_name: 'sujeet_data_analytics_workspace'
   bronze_schema: 'bronze_dev'
   silver_schema: 'silver_dev'
   gold_schema: 'gold_dev'
 
-# Default behavior for folders (lets us avoid repeating config in every file)
 models:
-  +on_schema_change: append_new_columns               # evolve tables safely
-  +persist_docs: { relation: true, columns: true }    # dbt docs: store descriptions in the warehouse
+  +on_schema_change: append_new_columns
+  +persist_docs: { relation: true, columns: true }
 
   look_dbt:
     staging:
-      +schema: '{{ var("silver_schema") }}'           # staging builds to SILVER
-      +materialized: view                             # views keep upstream always fresh
+      # Provide defaults so debug won't fail even if vars aren't loaded
+      +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +materialized: view
       look:
-        +schema: '{{ var("silver_schema") }}'         # explicit subfolder override (same)
+        +schema: '{{ var("silver_schema", "silver_dev") }}'
 
     intermediate:
-      +materialized: ephemeral                        # inlined into consumers for readability + speed
+      +materialized: ephemeral
       commerce:
-        +schema: '{{ var("silver_schema") }}'         # still “internal”, not user-facing
+        +schema: '{{ var("silver_schema", "silver_dev") }}'
 
     marts:
-      +schema: '{{ var("gold_schema") }}'             # marts are GOLD for analytics users
-      +materialized: table                            # fast to query; can promote to incremental
+      +schema: '{{ var("gold_schema", "gold_dev") }}'
+      +materialized: table
       core:
-        +schema: '{{ var("gold_schema") }}'
+        +schema: '{{ var("gold_schema", "gold_dev") }}'
 
-# Optional: after runs, call a macro that can send a Slack alert on failures (safe no-op if not wired)
 on-run-end:
   - "{{ notify_slack_on_failure() }}"
