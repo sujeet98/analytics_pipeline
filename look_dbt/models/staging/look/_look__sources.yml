@@ -1,5 +1,8 @@
 version: 2
 
+# "sources" declare raw/bronze tables and freshness policies.
+# We use these as the ONLY entry point to raw data in staging models.
+
 sources:
   - name: look
     database: '{{ var("catalog_name") }}'

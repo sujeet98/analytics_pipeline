@@ -1,0 +1,50 @@
+name: 'look_dbt'                 # canonical name of the project (used in selectors)
+version: '1.1.0'                 # your semver (purely informational to dbt)
+config-version: 2                # dbt’s project schema version
+
+profile: 'look_dbt'              # MUST match a profile in ~/.dbt/profiles.yml
+
+model-paths: ['models']          # where dbt scans for model .sql files
+macro-paths: ['macros']          # where dbt scans for Jinja macros
+seed-paths: ['seeds']            # static CSV lookup tables
+analysis-paths: ['analyses']     # saved queries (not built)
+snapshot-paths: ['snapshots']    # SCD2 definitions
+test-paths: ['tests']            # custom tests & unit tests
+
+quoting:                          # don’t quote identifiers unless we must
+  database: false
+  schema: false
+  identifier: false
+
+vars:                             # reusable variables (nice for cross-env portability)
+  catalog_name: 'sujeet_data_analytics_workspace'
+  bronze_schema: 'bronze_dev'
+  silver_schema: 'silver_dev'
+  gold_schema: 'gold_dev'
+
+# Default behavior for folders (lets us avoid repeating config in every file)
+models:
+  +on_schema_change: append_new_columns               # evolve tables safely
+  +persist_docs: { relation: true, columns: true }    # dbt docs: store descriptions in the warehouse
+
+  look_dbt:
+    staging:
+      +schema: '{{ var("silver_schema") }}'           # staging builds to SILVER
+      +materialized: view                             # views keep upstream always fresh
+      look:
+        +schema: '{{ var("silver_schema") }}'         # explicit subfolder override (same)
+
+    intermediate:
+      +materialized: ephemeral                        # inlined into consumers for readability + speed
+      commerce:
+        +schema: '{{ var("silver_schema") }}'         # still “internal”, not user-facing
+
+    marts:
+      +schema: '{{ var("gold_schema") }}'             # marts are GOLD for analytics users
+      +materialized: table                            # fast to query; can promote to incremental
+      core:
+        +schema: '{{ var("gold_schema") }}'
+
+# Optional: after runs, call a macro that can send a Slack alert on failures (safe no-op if not wired)
+on-run-end:
+  - "{{ notify_slack_on_failure() }}"

@@ -1,0 +1,20 @@
+packages:
+  # Generic helpers (joins, surrogate keys, etc.)
+  - package: dbt-labs/dbt_utils
+    version: ">=1.3.0,<2.0.0"
+
+  # Rich generic tests (nulls, ranges, distribution checks, etc.)
+  - package: calogica/dbt_expectations
+    version: ">=0.10.0,<1.0.0"
+
+  # Boilerplate generators (sources, staging, etc.)
+  - package: dbt-labs/codegen
+    version: ">=0.12.0,<1.0.0"
+
+  # Optional: monitoring & DQ observability project
+  - package: elementary-data/elementary
+    version: ">=0.13.0,<1.0.0"
+
+  # Optional: unit test framework for dbt models
+  - package: equalexperts/dbt-unit-testing
+    version: ">=0.4.15,<1.0.0"

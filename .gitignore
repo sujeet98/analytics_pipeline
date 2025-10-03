@@ -1,9 +1,14 @@
-# Ignore env files
-.env
-**/.env
-.env.*
-**/.env.*
+# dbt build artifacts and deps
+/target/
+/dbt_packages/
+/logs/
 
-# But keep templates in git
-!.env.example
-!.env.sample
+# Python/OS cruft (if present)
+__pycache__/
+*.pyc
+.DS_Store
+
+# Environment variable files
+*.env
+*.dbt_env
+profiles.yml
