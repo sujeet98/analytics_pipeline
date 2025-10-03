@@ -1,82 +1,83 @@
 version: 2
 
-# Folder-level model docs & tests. We keep these centralized per directory
-# to stay DRY and make it easy to find model metadata.
-
 models:
   - name: stg_look__orders
-    description: >
-      Clean, typed, deduplicated orders (no joins).
-      Grain: 1 row per order_id (latest by ingest_ts_utc).
+    description: "Staging view of orders: renamed, typed, de-nullified, no joins."
     columns:
       - name: order_id
-        description: Primary key for the order
-        data_type: bigint
         tests: [not_null, unique]
       - name: user_id
-        description: Foreign key to users_dim.user_id
-        data_type: bigint
-        tests:
-          - relationships: {to: ref('stg_look__users'), field: user_id}
+        tests: [not_null]
       - name: status
-        data_type: string
-      - name: gender
-        data_type: string
+        tests:
+          - dbt_utils.accepted_values:
+              values: ['Created','Processing','Shipped','Delivered','Returned','Cancelled','Complete']
       - name: created_at
-        data_type: timestamp
-      - name: created_date
-        data_type: date
-      - name: delivered_at
-        data_type: timestamp
+        tests: [not_null]
 
   - name: stg_look__order_items
-    description: Clean order_items with normalized statuses, money, and dates. Grain: 1 row per order_item_id.
+    description: "Staging view of order line items: clean ids, monetary types, timestamps."
     columns:
-      - name: order_item_id
+      - name: id
         tests: [not_null, unique]
       - name: order_id
         tests:
-          - relationships: {to: ref('stg_look__orders'), field: order_id}
-      - name: product_id
+          - not_null
+          - relationships:
+              to: ref('stg_look__orders')
+              field: order_id
+      - name: user_id
+      - name: sale_price
         tests:
-          - relationships: {to: ref('stg_look__products'), field: product_id}
-      - name: item_revenue
-        description: Rounded to 2 decimals
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+              strictly: false
+
+  - name: stg_look__events
+    description: "Staging view of web/app events, typed and trimmed."
+    columns:
+      - name: id
+        tests: [not_null, unique]
+      - name: session_id
+      - name: created_at
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - dbt_utils.accepted_values:
+              values: ['pageview','click','purchase','cancel','add_to_cart','remove_from_cart','checkout','login','signup','unknown']
 
   - name: stg_look__products
-    description: Products with normalized attributes and retail price
+    description: "Staging view of products (clean naming/types)."
     columns:
       - name: product_id
         tests: [not_null, unique]
+      - name: sku
+        tests: [not_null]
 
   - name: stg_look__inventory_items
-    description: Inventory items with DC id and unit cost
+    description: "Staging view of inventory items (costs, dates, product linkage)."
     columns:
       - name: inventory_item_id
         tests: [not_null, unique]
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__products')
+              field: product_id
 
   - name: stg_look__distribution_centers
-    description: Distribution center locations
+    description: "Staging view of distribution centers; geo kept as strings."
     columns:
       - name: distribution_center_id
         tests: [not_null, unique]
+      - name: name
+        tests: [not_null]
 
   - name: stg_look__users
-    description: Users with hashed email for PII-safe joins
+    description: "Staging view of users (PII in raw form; later we can mask)."
     columns:
       - name: user_id
-        data_type: bigint
         tests: [not_null, unique]
-      - name: email_sha256
-        data_type: string
-        tests: [not_null]
-      - name: created_date
-        data_type: date
-
-  - name: stg_look__events
-    description: Website/app events, normalized. Grain: 1 row per event_id.
-    columns:
-      - name: event_id
-        tests: [not_null, unique]
-      - name: event_date
-        data_type: date
+      - name: email
+      - name: created_at

@@ -1,33 +1,63 @@
 version: 2
 
-# "sources" declare raw/bronze tables and freshness policies.
-# We use these as the ONLY entry point to raw data in staging models.
-
 sources:
-  - name: look
-    database: '{{ var("catalog_name") }}'
-    schema: '{{ var("bronze_schema") }}'
+  - name: look                                  # logical name you’ll reference with source('look', ...)
+    description: >
+      Bronze tables landed from BigQuery (the LOOK DB) into Databricks via S3 → Autoloader.
+      These are raw-ish copies; we never transform here, only in staging models.
+    database: "{{ var('catalog_name', 'sujeet_data_analytics_workspace') }}"
+    schema: "{{ var('bronze_schema', 'bronze_dev') }}"
+    loader: "Autoloader from S3 (incremental, date+timestamp partitions)"
+
+    # Freshness settings are optional but great for portfolio-grade projects.
+    # We’ll use the raw ingest timestamp where available.
+    freshness:
+      warn_after: { count: 48, period: hour }
+      error_after: { count: 96, period: hour }
+
     tables:
       - name: orders
         identifier: orders
+        description: "Raw orders (one row per order)."
         loaded_at_field: ingest_ts_utc
-        freshness: { warn_after: {count: 48, period: hour}, error_after: {count: 96, period: hour} }
+        columns:
+          - name: order_id
+            description: "Primary key of the order in the source."
+          - name: user_id
+          - name: status
+          - name: gender
+          - name: created_at
+          - name: returned_at
+          - name: shipped_at
+          - name: delivered_at
+          - name: num_of_item
+
       - name: order_items
         identifier: order_items
+        description: "Raw order line items (one row per ordered product)."
         loaded_at_field: ingest_ts_utc
-        freshness: { warn_after: {count: 48, period: hour}, error_after: {count: 96, period: hour} }
+
       - name: events
         identifier: events
+        description: "Raw web/app events (clickstream)."
         loaded_at_field: ingest_ts_utc
-      - name: inventory_items
-        identifier: inventory_items
-        loaded_at_field: ingest_ts_utc
+
       - name: products
         identifier: products
+        description: "Product master data (may be de-normalized)."
         loaded_at_field: ingest_ts_utc
+
+      - name: inventory_items
+        identifier: inventory_items
+        description: "Inventory lots / SKUs ready for sale."
+        loaded_at_field: ingest_ts_utc
+
       - name: distribution_centers
         identifier: distribution_centers
+        description: "Distribution center reference (geo columns as WKT)."
         loaded_at_field: ingest_ts_utc
+
       - name: users
         identifier: users
+        description: "User/customer dimension straight from source."
         loaded_at_field: ingest_ts_utc
