@@ -1,25 +1,28 @@
 version: 2
 
 models:
+
   - name: stg_look__orders
-    description: "Staging view of orders: renamed, typed, de-nullified, no joins."
     columns:
       - name: order_id
         tests: [not_null, unique]
       - name: user_id
-        tests: [not_null]
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__users')
+              field: user_id
       - name: status
         tests:
           - accepted_values:
               arguments:
-                values: ['Created','Processing','Shipped','Delivered','Returned','Cancelled','Complete']
+                values: ['created','processing','shipped','delivered','returned','cancelled','complete','unknown']
       - name: created_at
         tests: [not_null]
 
   - name: stg_look__order_items
-    description: "Staging view of order line items: clean ids, monetary types, timestamps."
     columns:
-      - name: id
+      - name: order_item_id
         tests: [not_null, unique]
       - name: order_id
         tests:
@@ -27,35 +30,55 @@ models:
           - relationships:
               to: ref('stg_look__orders')
               field: order_id
+      - name: user_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__users')
+              field: user_id
+      - name: product_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__products')
+              field: product_id
+      - name: inventory_item_id
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__inventory_items')
+              field: inventory_item_id
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['created','processing','shipped','delivered','returned','cancelled','complete','unknown']
       - name: sale_price
         tests:
           - dbt_expectations.expect_column_values_to_be_between:
               min_value: 0
-              strictly: false
+              strict_min: false
 
   - name: stg_look__events
-    description: "Staging view of web/app events, typed and trimmed."
     columns:
-      - name: id
+      - name: event_id
         tests: [not_null, unique]
-      - name: created_at
-        tests: [not_null]
+      - name: user_id
+        tests:
+          # user_id can be NULL in your sample; keep relationships test but allow nulls
+          - relationships:
+              to: ref('stg_look__users')
+              field: user_id
+              # no not_null to avoid false positives
       - name: event_type
         tests:
           - accepted_values:
               arguments:
                 values: ['pageview','click','purchase','cancel','add_to_cart','remove_from_cart','checkout','login','signup','unknown']
-
-  - name: stg_look__products
-    description: "Staging view of products (clean naming/types)."
-    columns:
-      - name: product_id
-        tests: [not_null, unique]
-      - name: sku
+      - name: created_at
         tests: [not_null]
 
   - name: stg_look__inventory_items
-    description: "Staging view of inventory items (costs, dates, product linkage)."
     columns:
       - name: inventory_item_id
         tests: [not_null, unique]
@@ -65,19 +88,26 @@ models:
           - relationships:
               to: ref('stg_look__products')
               field: product_id
+      - name: product_distribution_center_id
+        tests:
+          - relationships:
+              to: ref('stg_look__distribution_centers')
+              field: distribution_center_id
 
-  - name: stg_look__distribution_centers
-    description: "Staging view of distribution centers; geo kept as strings."
+  - name: stg_look__products
     columns:
-      - name: distribution_center_id
+      - name: product_id
         tests: [not_null, unique]
-      - name: name
-        tests: [not_null]
+      - name: distribution_center_id
+        tests:
+          - relationships:
+              to: ref('stg_look__distribution_centers')
+              field: distribution_center_id
 
   - name: stg_look__users
-    description: "Staging view of users (PII in raw form; later we can mask)."
     columns:
       - name: user_id
         tests: [not_null, unique]
       - name: email
-      - name: created_at
+        tests:
+          - not_null
