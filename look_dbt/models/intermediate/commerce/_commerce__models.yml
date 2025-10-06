@@ -2,41 +2,36 @@ version: 2
 
 models:
   - name: int_order_items_enriched
-    description: "Item-grain enrichment joining product, inventory and DC metadata."
+    description: "Order items enriched with product & DC attributes."
     columns:
       - name: order_item_id
+        tests: [not_null, unique]
+      - name: order_id
         tests:
-          - not_null
-          - unique
+          - relationships:
+              arguments:
+                to: ref('stg_look__orders')
+                field: order_id
+      - name: user_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('users_dim')
+                field: user_id
       - name: product_id
         tests:
           - relationships:
-              to: ref('products_dim')   # mart-level dim is stable surrogate
-              field: product_id
-              severity: warn            # keep warn if you want builds to pass no matter what
-      - name: user_id
-        tests:
-          - relationships:
-              to: ref('users_dim')
-              field: user_id
-              severity: warn
+              arguments:
+                to: ref('products_dim')
+                field: product_id
       - name: distribution_center_id
         tests:
           - relationships:
-              to: ref('distribution_centers_dim')
-              field: distribution_center_id
-              severity: warn
+              arguments:
+                to: ref('distribution_centers_dim')
+                field: distribution_center_id
 
   - name: int_orders_aggregated_from_items
-    description: "Order-grain rollup from enriched order items."
-    columns:
-      - name: order_id
-        tests:
-          - not_null
-          - unique
-      - name: user_id
-        tests:
-          - relationships:
-              to: ref('users_dim')
-              field: user_id
-              severity: warn
+    description: "Order-level rollups calculated from order items."
+    config:
+      materialized: view

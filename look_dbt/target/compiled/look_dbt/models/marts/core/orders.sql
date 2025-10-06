@@ -1,29 +1,24 @@
 
 
-with orders as (
-  select
-    order_id,
-    user_id,
-    status,
-    created_at
-  from sujeet_data_analytics_workspace.silver_dev.stg_look__orders
+with
+orders as (
+  select * from sujeet_data_analytics_workspace.silver_dev.stg_look__orders
 ),
-items as (
+items_agg as (
+  -- order-level rollups from items
+  select * from sujeet_data_analytics_workspace.silver_dev.int_orders_aggregated_from_items
+),
+final as (
   select
-    order_id,
-    count(*) as item_count,
-    sum(sale_price) as order_gross_revenue
-  from sujeet_data_analytics_workspace.silver_dev.stg_look__order_items
-  group by 1
+      o.order_id,
+      o.user_id,
+      o.status,
+      o.created_at,                            -- lineage + testing
+      coalesce(a.item_count, 0)               as item_count,
+      coalesce(a.items_gross_revenue, 0.0)    as order_gross_revenue
+  from orders o
+  left join items_agg a
+    on o.order_id = a.order_id
 )
 
-select
-  o.order_id,
-  o.user_id,
-  o.created_at,
-  o.status,
-  coalesce(i.item_count, 0) as item_count,
-  coalesce(i.order_gross_revenue, 0.0) as order_gross_revenue
-from orders o
-left join items i using (order_id)
-
+select * from final

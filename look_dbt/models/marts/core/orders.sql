@@ -1,41 +1,29 @@
 {{ config(
     materialized='incremental',
-    unique_key='order_id',
-    on_schema_change='append_new_columns',
     incremental_strategy='merge',
-    constraints={
-      "primary_key": "order_id",
-      "not_null": ["order_id","user_id","created_at"]
-    }
+    unique_key='order_id',
+    on_schema_change='append_new_columns'
 ) }}
 
-with orders as (
-  select
-    order_id,
-    user_id,
-    status,
-    created_at
-  from {{ ref('stg_look__orders') }}
+with
+orders as (
+  select * from {{ ref('stg_look__orders') }}
 ),
-items as (
+items_agg as (
+  -- order-level rollups from items
+  select * from {{ ref('int_orders_aggregated_from_items') }}
+),
+final as (
   select
-    order_id,
-    count(*) as item_count,
-    sum(sale_price) as order_gross_revenue
-  from {{ ref('stg_look__order_items') }}
-  group by 1
+      o.order_id,
+      o.user_id,
+      o.status,
+      o.created_at,                            -- lineage + testing
+      coalesce(a.item_count, 0)               as item_count,
+      coalesce(a.items_gross_revenue, 0.0)    as order_gross_revenue
+  from orders o
+  left join items_agg a
+    on o.order_id = a.order_id
 )
 
-select
-  o.order_id,
-  o.user_id,
-  o.created_at,
-  o.status,
-  coalesce(i.item_count, 0) as item_count,
-  coalesce(i.order_gross_revenue, 0.0) as order_gross_revenue
-from orders o
-left join items i using (order_id)
-
-{% if is_incremental() %}
-where o.created_at > (select coalesce(max(created_at), '1900-01-01') from {{ this }})
-{% endif %}
+select * from final

@@ -63,7 +63,8 @@ models:
         tests:
           - dbt_utils.expression_is_true:
               arguments:
-                expression: "order_gross_revenue >= 0"
+                # IMPORTANT: Use a relative expression (macro supplies column)
+                expression: ">= 0"
 
   - name: order_items
     group: core
@@ -102,7 +103,7 @@ models:
         tests:
           - dbt_utils.expression_is_true:
               arguments:
-                expression: "item_revenue >= 0"
+                expression: ">= 0"
 
 exposures:
   - name: executive_revenue_dashboard

@@ -1,44 +1,29 @@
-{#
-  Purpose
-  -------
-  Fact table at order-item grain for BI.
-#}
+{{ config(materialized='table') }}
 
-{{ config(
-    materialized='table'
-) }}
+with i as (
+  select * from {{ ref('int_order_items_enriched') }}
+)
 
 select
   -- keys
-  order_item_id,
-  order_id,
-  user_id,
-  product_id,
-  inventory_item_id,
+  i.order_item_id,
+  i.order_id,
+  i.user_id,
+  i.product_id,
+  i.inventory_item_id,
 
-  -- degenerate dims / attrs
-  item_status,
-  product_category,
-  product_name,
-  product_brand,
-  product_department,
-  product_sku,
-  distribution_center_id,
-  distribution_center_name,
-  distribution_center_latitude,
-  distribution_center_longitude,
+  -- status & timing
+  i.item_status     as status,
+  i.item_created_at as created_at,
 
-  -- timestamps
-  created_at       as item_created_at,
-  shipped_at       as item_shipped_at,
-  delivered_at     as item_delivered_at,
-  returned_at      as item_returned_at,
+  -- pricing
+  i.sale_price      as item_revenue,
 
-  -- measures
-  item_revenue,
-  days_to_ship,
-  days_in_transit,
-  days_to_return
+  -- product attrs
+  i.product_name,
+  i.product_brand,
+  i.product_sku,
 
-from {{ ref('int_order_items_enriched') }}
-;
+  -- fulfillment attrs
+  i.distribution_center_id
+from i
