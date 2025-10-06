@@ -1,3 +1,5 @@
+{# Small helpers to keep staging models DRY and readable. #}
+
 {% macro nullif_blank(value) -%}
     /* Returns NULL if a value is '' or '-' (we saw '-' in sample data), else the value */
     nullif(nullif({{ value }}, ''), '-')

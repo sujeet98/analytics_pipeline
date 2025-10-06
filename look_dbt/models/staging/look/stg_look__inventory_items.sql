@@ -1,7 +1,10 @@
-{{ config(materialized='view', tags=['staging']) }}
+{{ config(
+    materialized = 'view',
+    tags = ['staging']
+) }}
 
 with source as (
-  select * from {{ source('look','inventory_items') }}
+  select * from {{ ref('base_look__inventory_items') }}
 ),
 
 renamed as (

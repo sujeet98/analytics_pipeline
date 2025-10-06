@@ -10,8 +10,9 @@ models:
         tests: [not_null]
       - name: status
         tests:
-          - dbt_utils.accepted_values:
-              values: ['Created','Processing','Shipped','Delivered','Returned','Cancelled','Complete']
+          - accepted_values:
+              arguments:
+                values: ['Created','Processing','Shipped','Delivered','Returned','Cancelled','Complete']
       - name: created_at
         tests: [not_null]
 
@@ -26,7 +27,6 @@ models:
           - relationships:
               to: ref('stg_look__orders')
               field: order_id
-      - name: user_id
       - name: sale_price
         tests:
           - dbt_expectations.expect_column_values_to_be_between:
@@ -38,13 +38,13 @@ models:
     columns:
       - name: id
         tests: [not_null, unique]
-      - name: session_id
       - name: created_at
         tests: [not_null]
       - name: event_type
         tests:
-          - dbt_utils.accepted_values:
-              values: ['pageview','click','purchase','cancel','add_to_cart','remove_from_cart','checkout','login','signup','unknown']
+          - accepted_values:
+              arguments:
+                values: ['pageview','click','purchase','cancel','add_to_cart','remove_from_cart','checkout','login','signup','unknown']
 
   - name: stg_look__products
     description: "Staging view of products (clean naming/types)."

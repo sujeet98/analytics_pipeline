@@ -1,5 +1,0 @@
-groups:
-  - name: commerce
-    owner:
-      email: data-team@example.com
-    description: Core commerce entities (orders, order_items, events) for analytics

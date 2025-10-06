@@ -1,12 +1,15 @@
-{{ config(materialized='view', tags=['staging']) }}
+{{ config(
+    materialized = 'view',
+    tags = ['staging']
+) }}
 
 with source as (
-    select * from {{ source('look','order_items') }}
+    select * from {{ ref('base_look__order_items') }}
 ),
 
 renamed as (
     select
-        {{ to_bigint_safe('id') }}                           as id,                    -- PK at line item grain
+        {{ to_bigint_safe('id') }}                           as id,                    -- line item PK
         {{ to_bigint_safe('order_id') }}                     as order_id,
         {{ to_bigint_safe('user_id') }}                      as user_id,
         {{ to_bigint_safe('product_id') }}                   as product_id,
@@ -18,7 +21,6 @@ renamed as (
         {{ to_timestamp_safe('delivered_at') }}              as delivered_at,
         {{ to_timestamp_safe('returned_at') }}               as returned_at,
 
-        /* Money comes in as doubles. Keep as DOUBLE here (business rules later). */
         {{ to_double_safe('sale_price') }}                   as sale_price,
 
         {{ to_timestamp_safe('ingest_ts_utc') }}             as ingest_ts_utc,

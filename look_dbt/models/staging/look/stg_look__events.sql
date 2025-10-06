@@ -1,7 +1,10 @@
-{{ config(materialized='view', tags=['staging']) }}
+{{ config(
+    materialized = 'view',
+    tags = ['staging']
+) }}
 
 with source as (
-    select * from {{ source('look','events') }}
+    select * from {{ ref('base_look__events') }}
 ),
 
 renamed as (
@@ -22,7 +25,6 @@ renamed as (
         cast({{ nullif_blank('traffic_source') }} as string)as traffic_source,
         cast({{ nullif_blank('uri') }} as string)           as uri,
 
-        -- normalize event types to a controlled set
         case lower(trim(event_type))
             when 'pageview' then 'pageview'
             when 'click' then 'click'

@@ -16,6 +16,11 @@ quoting:
   schema: false
   identifier: false
 
+flags:
+  require_explicit_package_overrides_for_builtin_materializations: false
+  use_materialization_v2: true
+
+
 # ⬇️ TOP-LEVEL vars (same indentation as `models:`)
 vars:
   catalog_name: 'sujeet_data_analytics_workspace'
@@ -45,6 +50,3 @@ models:
       +materialized: table
       core:
         +schema: '{{ var("gold_schema", "gold_dev") }}'
-
-on-run-end:
-  - "{{ notify_slack_on_failure() }}"
