@@ -10,7 +10,7 @@ with child as (
 
 parent as (
     select order_id as to_field
-    from sujeet_data_analytics_workspace.silver_dev.stg_orders
+    from sujeet_data_analytics_workspace.silver_dev.stg_look__orders
 )
 
 select

@@ -16,29 +16,24 @@ cast({{ col }} as timestamp)
 {# Normalize ORDER status to a controlled set #}
 {% macro normalize_order_status(col) -%}
 case lower({{ col }})
-  when 'created'     then 'created'
-  when 'processing'  then 'processing'
-  when 'shipped'     then 'shipped'
-  when 'delivered'   then 'delivered'
-  when 'returned'    then 'returned'
-  when 'cancelled'   then 'cancelled'
-  when 'complete'    then 'complete'
-  else 'unknown'
+  when 'Complete'     then 'Complete'
+  when 'Shipped'      then 'Shipped'
+  when 'Returned'     then 'Returned'
+  when 'Cancelled'    then 'Cancelled'
+  when 'Processing'   then 'Processing'
+  else 'Unknown'
 end
 {%- endmacro %}
 
 {# Normalize EVENT type to a controlled set #}
 {% macro normalize_event_type(col) -%}
 case lower({{ col }})
-  when 'pageview'         then 'pageview'
-  when 'click'            then 'click'
-  when 'purchase'         then 'purchase'
-  when 'cancel'           then 'cancel'
-  when 'add_to_cart'      then 'add_to_cart'
-  when 'remove_from_cart' then 'remove_from_cart'
-  when 'checkout'         then 'checkout'
-  when 'login'            then 'login'
-  when 'signup'           then 'signup'
+  when 'product'         then 'product'
+  when 'cart'            then 'cart'
+  when 'home'            then 'home'
+  when 'cancel'          then 'cancel'
+  when 'purchase'        then 'purchase'
+  when 'department'      then 'department'
   else 'unknown'
 end
 {%- endmacro %}

@@ -1,15 +1,17 @@
 
 
--- Purpose: Entity table for events at event_id grain
 select
   event_id,
   user_id,
   session_id,
   sequence_number,
+  created_at,
   event_type,
+  city,
+  state,
+  postal_code,
   browser,
   traffic_source,
   uri,
-  created_at,
-  event_date
+  ip_address
 from sujeet_data_analytics_workspace.silver_dev.stg_look__events

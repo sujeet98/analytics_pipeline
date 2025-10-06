@@ -1,19 +1,21 @@
-# Look Ecommerce dbt on Databricks (Best-Practices Aligned)
+# look_dbt
 
-This project models Bronze tables from `sujeet_data_analytics_workspace.bronze_dev` into:
+## Layers
+- **staging (silver_dev)**: 1:1 with sources, no joins, views.
+- **intermediate (ephemeral)**: purpose-specific (re-graining, pre-joins), not user-facing.
+- **marts/core (gold_dev)**: wide, denormalized entities; tables/incremental with constraints.
 
-- **staging** (atoms) — 1:1 cleaned views of raw tables (renaming, typing, dedupe, no joins)
-- **intermediate** (molecules) — purpose-built steps (re-graining, enrichment)
-- **marts** (entities) — denormalized, entity-grained tables optimized for analytics
+## Commands
+- Build staging (Look): `dbt build --selector staging_look`
+- Build marts with parents: `dbt build --selector marts_core_with_ancestors`
+- Only changed + parents: `dbt build --selector changed_plus_parents`
 
-## Quickstart
+## Quality
+- Tests live in folder YAML, under `arguments:` (dbt v2 syntax).
+- Referential gaps kept as failing tests to surface source issues.
+- Elementary models (first time): `dbt run -s elementary --target dev`
 
-```bash
-# 1) install packages listed in packages.yml
-dbt deps
-
-# 2) first run builds all layers and tests
-dbt build
-
-# 3) typical daily run — build in dependency order
-dbt build --select marts intermediate staging
+## Conventions
+- File names: `base_...`, `stg_...`, `int_..._verb`, marts named by entity.
+- Constraints on marts: primary keys + not null.
+- Docs & exposures maintained in YAML; run `dbt docs generate && dbt docs serve`.

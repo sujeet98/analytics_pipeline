@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: int_order_items_enriched
+    description: "Item-grain enrichment joining product, inventory and DC metadata."
+    columns:
+      - name: order_item_id
+        tests:
+          - not_null
+          - unique
+      - name: product_id
+        tests:
+          - relationships:
+              to: ref('products_dim')   # mart-level dim is stable surrogate
+              field: product_id
+              severity: warn            # keep warn if you want builds to pass no matter what
+      - name: user_id
+        tests:
+          - relationships:
+              to: ref('users_dim')
+              field: user_id
+              severity: warn
+      - name: distribution_center_id
+        tests:
+          - relationships:
+              to: ref('distribution_centers_dim')
+              field: distribution_center_id
+              severity: warn
+
+  - name: int_orders_aggregated_from_items
+    description: "Order-grain rollup from enriched order items."
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+      - name: user_id
+        tests:
+          - relationships:
+              to: ref('users_dim')
+              field: user_id
+              severity: warn

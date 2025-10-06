@@ -1,0 +1,22 @@
+selectors:
+  - name: staging_look
+    definition:
+      method: fqn
+      value: look_dbt.staging.look
+
+  - name: marts_core_with_ancestors
+    definition:
+      union:
+        - method: fqn
+          value: look_dbt.marts.core
+          parents: true
+
+  - name: changed_plus_parents
+    definition:
+      union:
+        - method: state
+          value: modified
+          parents: true
+        - method: state
+          value: new
+          parents: true

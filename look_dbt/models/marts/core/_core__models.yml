@@ -1,0 +1,119 @@
+version: 2
+
+groups:
+  - name: core
+    owner:
+      email: sujeetkohli@icloud.com
+    description: "Core business marts shared across teams"
+
+models:
+  - name: products_dim
+    group: core
+    description: "Product dimension at product_id grain."
+    columns:
+      - name: product_id
+        description: "Surrogate/product key."
+        tests:
+          - not_null
+          - unique
+
+  - name: users_dim
+    group: core
+    description: "User dimension (business-conformed users)."
+    columns:
+      - name: user_id
+        tests:
+          - not_null
+          - unique
+      - name: email
+        tests:
+          - not_null
+
+  - name: events
+    group: core
+    description: "Event facts, one row per event."
+    columns:
+      - name: event_id
+        tests:
+          - not_null
+          - unique
+      - name: user_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__users')
+                field: user_id
+
+  - name: orders
+    group: core
+    description: "Orders mart with item_count and gross revenue."
+    columns:
+      - name: order_id
+        tests:
+          - not_null
+          - unique
+      - name: user_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__users')
+                field: user_id
+      - name: order_gross_revenue
+        description: "Non-negative sanity check."
+        tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "order_gross_revenue >= 0"
+
+  - name: order_items
+    group: core
+    description: "Order item fact at order_item_id grain."
+    columns:
+      - name: order_item_id
+        tests:
+          - not_null
+          - unique
+      - name: order_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__orders')
+                field: order_id
+      - name: product_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__products')
+                field: product_id
+      - name: inventory_item_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__inventory_items')
+                field: inventory_item_id
+      - name: user_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__users')
+                field: user_id
+      - name: item_revenue
+        description: "Non-negative sanity check."
+        tests:
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "item_revenue >= 0"
+
+exposures:
+  - name: executive_revenue_dashboard
+    type: dashboard
+    maturity: high
+    url: https://your-bi-tool.example.com/dashboards/revenue
+    description: "Exec view of orders & revenue"
+    owner:
+      name: Data Team
+      email: data@yourcompany.com
+    depends_on:
+      - ref('orders')
+      - ref('products_dim')
+      - ref('users_dim')
