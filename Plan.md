@@ -1,5 +1,6 @@
-# Repo Structure
+# Repository Structure
 
+```
 ANALYTICS_PIPELINE/
 ├── ingestion/
 │   └── thelook_ingest/
@@ -57,6 +58,8 @@ ANALYTICS_PIPELINE/
 ├── .gitignore
 ├── README.md
 └── requirements.txt
+```
+
 
 # `ingestion/thelook_ingest/config.py` — What it is
 
