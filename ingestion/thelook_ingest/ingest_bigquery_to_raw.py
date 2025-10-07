@@ -1,4 +1,4 @@
-# 01_ingest_bigquery_to_raw_volume.py
+# ingest_bigquery_to_raw.py
 #
 # ──────────────────────────────────────────────────────────────────────────────
 # GOAL
