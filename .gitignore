@@ -15,3 +15,4 @@ __pycache__/
 # Environment variable files
 *.env
 *.dbt_env
+venv/
