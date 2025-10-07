@@ -1,14 +1,9 @@
-{{ config(
-  materialized='incremental',
-  unique_key='order_item_id',
-  incremental_strategy='merge',
-  on_schema_change='sync_all_columns'
-) }}
 
-with items as ( select * from {{ ref('stg_look__order_items') }} ),
-inv   as ( select * from {{ ref('stg_look__inventory_items') }} ),
-prod  as ( select * from {{ ref('stg_look__products') }} ),
-dc    as ( select * from {{ ref('stg_look__distribution_centers') }} ),
+
+with items as ( select * from sujeet_data_analytics_workspace.silver_dev.stg_look__order_items ),
+inv   as ( select * from sujeet_data_analytics_workspace.silver_dev.stg_look__inventory_items ),
+prod  as ( select * from sujeet_data_analytics_workspace.silver_dev.stg_look__products ),
+dc    as ( select * from sujeet_data_analytics_workspace.silver_dev.stg_look__distribution_centers ),
 
 items_joined as (
   select
@@ -39,8 +34,3 @@ items_with_dc as (
 
 select *
 from items_with_dc
-{% if is_incremental() %}
-  where src_ingest_ts >= (
-    select coalesce(dateadd('day', -2, max(src_ingest_ts)), timestamp '1970-01-01') from {{ this }}
-  )
-{% endif %}
