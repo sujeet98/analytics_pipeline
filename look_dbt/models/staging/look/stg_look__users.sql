@@ -1,22 +1,46 @@
-{{ config(materialized='view') }}
+-- Staging model: Users
+-- Dedup by user_id; keep PII here so downstream marts can choose what to expose.
 
-with b as (select * from {{ ref('base_look__users') }})
+with raw as (
+  select
+    id as user_id,
+    first_name, last_name, email, age, gender,
+    state, street_address, postal_code, city, country,
+    latitude, longitude, traffic_source, created_at, user_geom,
+    coalesce(
+      ingest_ts_utc,
+      to_timestamp(concat(ingest_date, ' ', run_ts), 'yyyy-MM-dd HHmmss')
+    ) as src_ingest_ts
+  from {{ source('bronze_dev','users') }}
+),
+
+ranked as (
+  select
+    r.*,
+    row_number() over (
+      partition by r.user_id
+      order by r.src_ingest_ts desc
+    ) as rn
+  from raw r
+)
+
 select
-  id as user_id,
-  {{ clean_string('first_name') }} as first_name,
-  {{ clean_string('last_name') }}  as last_name,
-  {{ clean_string('email') }}      as email,
-  age,
-  {{ clean_string('gender') }}  as gender,
-  {{ clean_string('state') }}   as state,
-  {{ clean_string('street_address') }} as street_address,
-  {{ clean_string('postal_code') }}    as postal_code,
-  {{ clean_string('city') }}           as city,
-  {{ clean_string('country') }}        as country,
-  latitude,
-  longitude,
-  {{ clean_string('traffic_source') }} as traffic_source,
-  {{ parse_ts('created_at') }} as created_at,
-  user_geom,
-  ingest_ts_utc, source_table, ingest_date, run_ts
-from b
+  cast(user_id as bigint)         as user_id,
+  trim(first_name)                as first_name,
+  trim(last_name)                 as last_name,
+  trim(email)                     as email,
+  cast(age as bigint)             as age,
+  trim(gender)                    as gender,
+  trim(state)                     as state,
+  trim(street_address)            as street_address,
+  trim(postal_code)               as postal_code,
+  trim(city)                      as city,
+  trim(country)                   as country,
+  cast(latitude as double)        as latitude,
+  cast(longitude as double)       as longitude,
+  trim(traffic_source)            as traffic_source,
+  cast(created_at as timestamp)   as created_at,
+  trim(user_geom)                 as user_geom,
+  src_ingest_ts
+from ranked
+where rn = 1;

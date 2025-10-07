@@ -14,19 +14,35 @@
     
       inventory_item_id bigint,
     
-      status string COMMENT 'Normalized order item status.',
+      item_status string,
     
-      created_at timestamp,
+      sale_price decimal(18, 2) COMMENT 'Nullable, but if present must be >= 0.',
     
-      item_revenue decimal(18, 2) COMMENT 'Non-negative sanity check.',
+      item_created_at timestamp,
+    
+      inv_product_id bigint,
+    
+      product_distribution_center_id bigint,
     
       product_name string,
     
       product_brand string,
     
+      product_category string,
+    
+      product_department string,
+    
+      retail_price decimal(18, 2),
+    
       product_sku string,
     
-      distribution_center_id bigint
+      distribution_center_id bigint,
+    
+      distribution_center_name string,
+    
+      distribution_center_latitude double,
+    
+      distribution_center_longitude double
     
     
   )
@@ -38,7 +54,7 @@
   
   
   
-  comment 'Order item fact at order_item_id grain.'
+  comment 'Core fact at line-item grain with product/DC enrichment.'
   
 
   

@@ -1,28 +1,18 @@
+-- Conformed User dimension (safe attributes by default).
 
 
-with users as (
-  select
-    user_id,
-    first_name,
-    last_name,
-    email,
-    gender,
-    state,
-    city,
-    country,
-    created_at
-  from sujeet_data_analytics_workspace.silver_dev.stg_look__users
-)
 
 select
   user_id,
+  email,
   first_name,
   last_name,
-  email,
-  split_part(lower(email), '@', 2) as email_domain,
+  age,
   gender,
-  state,
   city,
+  state,
   country,
-  created_at
-from users
+  traffic_source,
+  created_at,
+  src_ingest_ts
+from sujeet_data_analytics_workspace.silver_dev.stg_look__users;

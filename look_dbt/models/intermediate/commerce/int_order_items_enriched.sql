@@ -1,7 +1,6 @@
 {{ config(
     materialized='incremental',
     unique_key='order_item_id',
-    incremental_strategy='merge',
     on_schema_change='append_new_columns'
 ) }}
 
@@ -21,25 +20,25 @@ items_joined as (
         oi.inventory_item_id,
 
         -- item facts
-        oi.status                               as item_status,
+        oi.status         as item_status,
         oi.sale_price,
-        oi.created_at                           as item_created_at,
+        oi.created_at     as item_created_at,
 
         -- inventory attrs
-        inv.product_id                          as inv_product_id,
+        inv.product_id    as inv_product_id,
         inv.product_distribution_center_id,
 
         -- product attrs
-        prod.name                               as product_name,
-        prod.brand                              as product_brand,
-        prod.category                           as product_category,
-        prod.department                         as product_department,
+        prod.name         as product_name,
+        prod.brand        as product_brand,
+        prod.category     as product_category,
+        prod.department   as product_department,
         prod.retail_price,
-        prod.sku                                as product_sku,
+        prod.sku          as product_sku,
 
         -- resolve DC id from inventory first, else product
         coalesce(inv.product_distribution_center_id, prod.distribution_center_id)
-                                                 as distribution_center_id
+          as distribution_center_id
     from oi
     left join inv
       on oi.inventory_item_id = inv.inventory_item_id
@@ -61,8 +60,6 @@ items_with_dc as (
 select * from items_with_dc
 
 {% if is_incremental() %}
-  where item_created_at > (
-    select coalesce(max(item_created_at), to_timestamp('1970-01-01'))
-    from {{ this }}
-  )
+  -- protect against reprocessing if upstream bronze/staging are append-only
+  where order_item_id not in (select order_item_id from {{ this }})
 {% endif %}

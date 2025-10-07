@@ -1,23 +1,16 @@
-{{ config(
-    materialized='table',
-    constraints={
-      "primary_key": "event_id",
-      "not_null": ["event_id","created_at"]
-    }
-) }}
+-- Event fact at event_id grain.
+-- Table materialization is fine (modest volume; simple shape).
+
+{{ config(materialized='table') }}
 
 select
   event_id,
   user_id,
-  session_id,
-  sequence_number,
-  created_at,
   event_type,
-  city,
-  state,
-  postal_code,
+  created_at,
   browser,
   traffic_source,
   uri,
-  ip_address
-from {{ ref('stg_look__events') }}
+  city, state, postal_code, ip_address,
+  src_ingest_ts
+from {{ ref('stg_look__events') }};

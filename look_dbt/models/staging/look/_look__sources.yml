@@ -1,63 +1,22 @@
 version: 2
 
 sources:
-  - name: look                                  # logical name you’ll reference with source('look', ...)
-    description: >
-      Bronze tables landed from BigQuery (the LOOK DB) into Databricks via S3 → Autoloader.
-      These are raw-ish copies; we never transform here, only in staging models.
-    database: "{{ var('catalog_name', 'sujeet_data_analytics_workspace') }}"
-    schema: "{{ var('bronze_schema', 'bronze_dev') }}"
-    loader: "Autoloader from S3 (incremental, date+timestamp partitions)"
-
-    # Freshness settings are optional but great for portfolio-grade projects.
-    # We’ll use the raw ingest timestamp where available.
-    freshness:
-      warn_after: { count: 48, period: hour }
-      error_after: { count: 96, period: hour }
-
+  - name: bronze_dev
+    database: sujeet_data_analytics_workspace
+    schema: bronze_dev
+    description: "Raw incremental ingests from Databricks Autoloader for TheLook sample data."
     tables:
       - name: orders
-        identifier: orders
-        description: "Raw orders (one row per order)."
-        loaded_at_field: ingest_ts_utc
-        columns:
-          - name: order_id
-            description: "Primary key of the order in the source."
-          - name: user_id
-          - name: status
-          - name: gender
-          - name: created_at
-          - name: returned_at
-          - name: shipped_at
-          - name: delivered_at
-          - name: num_of_item
-
+        description: "Raw orders; duplicates may exist across overlapping ingest partitions."
       - name: order_items
-        identifier: order_items
-        description: "Raw order line items (one row per ordered product)."
-        loaded_at_field: ingest_ts_utc
-
+        description: "Raw order items; duplicates may exist across overlapping ingest partitions."
       - name: events
-        identifier: events
-        description: "Raw web/app events (clickstream)."
-        loaded_at_field: ingest_ts_utc
-
-      - name: products
-        identifier: products
-        description: "Product master data (may be de-normalized)."
-        loaded_at_field: ingest_ts_utc
-
-      - name: inventory_items
-        identifier: inventory_items
-        description: "Inventory lots / SKUs ready for sale."
-        loaded_at_field: ingest_ts_utc
-
-      - name: distribution_centers
-        identifier: distribution_centers
-        description: "Distribution center reference (geo columns as WKT)."
-        loaded_at_field: ingest_ts_utc
-
+        description: "Raw web/app events; may be anonymous."
       - name: users
-        identifier: users
-        description: "User/customer dimension straight from source."
-        loaded_at_field: ingest_ts_utc
+        description: "Raw users."
+      - name: products
+        description: "Raw products."
+      - name: inventory_items
+        description: "Raw inventory items; includes product attributes as landed."
+      - name: distribution_centers
+        description: "Raw distribution centers."

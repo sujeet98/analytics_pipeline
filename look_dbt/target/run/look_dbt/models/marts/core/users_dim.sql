@@ -6,23 +6,27 @@
     
       user_id bigint,
     
+      email string,
+    
       first_name string,
     
       last_name string,
     
-      email string,
-    
-      email_domain string,
+      age bigint,
     
       gender string,
     
-      state string,
-    
       city string,
+    
+      state string,
     
       country string,
     
-      created_at timestamp
+      traffic_source string,
+    
+      created_at timestamp,
+    
+      src_ingest_ts timestamp
     
     
   )
@@ -34,7 +38,7 @@
   
   
   
-  comment 'User dimension (business-conformed users).'
+  
   
 
   

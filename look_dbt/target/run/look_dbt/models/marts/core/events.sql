@@ -6,21 +6,11 @@
     
       event_id bigint,
     
-      user_id bigint,
+      user_id bigint COMMENT 'Nullable FK — some events are anonymous.',
     
-      session_id string,
+      event_type string,
     
-      sequence_number bigint,
-    
-      created_at timestamp COMMENT 'UTC timestamp of the event.',
-    
-      event_type string COMMENT 'Normalized event type.',
-    
-      city string,
-    
-      state string,
-    
-      postal_code string,
+      created_at timestamp,
     
       browser string,
     
@@ -28,7 +18,15 @@
     
       uri string,
     
-      ip_address string
+      city string,
+    
+      state string,
+    
+      postal_code string,
+    
+      ip_address string,
+    
+      src_ingest_ts timestamp
     
     
   )
@@ -40,7 +38,7 @@
   
   
   
-  comment 'Event facts, one row per event.'
+  
   
 
   

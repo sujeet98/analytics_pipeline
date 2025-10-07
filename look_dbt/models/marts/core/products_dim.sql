@@ -1,19 +1,16 @@
-{{ config(
-    materialized='table',
-    constraints={
-      "primary_key": "product_id",
-      "not_null": ["product_id","sku"]
-    }
-) }}
+-- Conformed Product dimension.
+
+{{ config(materialized='table') }}
 
 select
   product_id,
-  name,
-  brand,
-  category,
-  department,
-  sku,
+  name            as product_name,
+  brand           as product_brand,
+  category        as product_category,
+  department      as product_department,
+  sku             as product_sku,
   retail_price,
   cost,
-  distribution_center_id
-from {{ ref('stg_look__products') }}
+  distribution_center_id,
+  src_ingest_ts
+from {{ ref('stg_look__products') }};

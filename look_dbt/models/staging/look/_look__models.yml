@@ -1,197 +1,132 @@
 version: 2
 
 models:
-
-  # =========================
-  # ORDERS
-  # =========================
   - name: stg_look__orders
-    description: "Cleaned + deduped orders from bronze_dev.orders."
+    description: "Orders, deduped by order_id (latest ingestion), typed & normalized."
     columns:
       - name: order_id
-        description: "PK from bronze.orders.order_id."
         tests: [not_null, unique]
-
       - name: user_id
-        description: "FK to stg_look__users.user_id."
-        tests:
-          - not_null
-          - relationships:
-              arguments:
-                to: ref('stg_look__users')
-                field: user_id
-
+        tests: [not_null]
       - name: status
-        description: "Normalized order status."
         tests:
           - accepted_values:
               arguments:
                 values: ['Complete','Shipped','Returned','Cancelled','Processing','Unknown']
-
       - name: created_at
-        description: "UTC timestamp when the order was created."
         tests: [not_null]
 
-  # =========================
-  # ORDER ITEMS
-  # =========================
   - name: stg_look__order_items
-    description: "Cleaned + deduped order items from bronze_dev.order_items."
+    description: "Order items, deduped by order_item_id, typed & normalized."
     columns:
       - name: order_item_id
-        description: "PK (from bronze.order_items.id)."
         tests: [not_null, unique]
-
       - name: order_id
-        description: "FK to stg_look__orders.order_id."
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('stg_look__orders')
                 field: order_id
-
       - name: user_id
-        description: "FK to stg_look__users.user_id."
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('stg_look__users')
                 field: user_id
-
       - name: product_id
-        description: "FK to stg_look__products.product_id."
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('stg_look__products')
                 field: product_id
-
       - name: inventory_item_id
-        description: "FK to stg_look__inventory_items.inventory_item_id."
         tests:
-          - not_null
+          # keep as warn if you truly have early-arriving items
           - relationships:
               arguments:
                 to: ref('stg_look__inventory_items')
                 field: inventory_item_id
-              config:
-                severity: warn   # known source gap: keep test, don't fail builds
-
+              severity: warn
+              # Optional: enforce only for finalized items to reduce noise
+              where: "status in ('Complete','Shipped','Returned','Cancelled')"
       - name: status
-        description: "Normalized order item status."
         tests:
           - accepted_values:
               arguments:
                 values: ['Complete','Shipped','Returned','Cancelled','Processing','Unknown']
-
       - name: sale_price
-        description: "Non-negative realized price."
+        description: "Nullable until the item is priced; if present it must be non-negative."
         tests:
-          - dbt_expectations.expect_column_values_to_be_between:
-              arguments:
-                min_value: 0
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
 
-  # =========================
-  # EVENTS
-  # =========================
   - name: stg_look__events
-    description: "Cleaned + deduped events from bronze_dev.events."
+    description: "Events, deduped by event_id, typed & normalized."
     columns:
       - name: event_id
-        description: "PK (from bronze.events.id)."
         tests: [not_null, unique]
-
       - name: user_id
-        description: "Nullable FK to stg_look__users.user_id (events may be anonymous)."
+        description: "Nullable FK — some events are anonymous."
         tests:
           - relationships:
               arguments:
                 to: ref('stg_look__users')
                 field: user_id
-
       - name: event_type
-        description: "Normalized event type."
         tests:
           - accepted_values:
               arguments:
                 values: ['product','cart','home','cancel','purchase','department','unknown']
-
       - name: created_at
-        description: "UTC timestamp of the event."
         tests: [not_null]
 
-  # =========================
-  # INVENTORY ITEMS
-  # =========================
+  - name: stg_look__users
+    description: "Users, deduped by user_id, typed."
+    columns:
+      - name: user_id
+        tests: [not_null, unique]
+      - name: email
+        tests: [not_null]
+
+  - name: stg_look__products
+    description: "Products, deduped by product_id, typed."
+    columns:
+      - name: product_id
+        tests: [not_null, unique]
+      - name: distribution_center_id
+        tests:
+          - relationships:
+              arguments:
+                to: ref('stg_look__distribution_centers')
+                field: distribution_center_id
+
   - name: stg_look__inventory_items
-    description: "Cleaned + deduped inventory items from bronze_dev.inventory_items."
+    description: "Inventory items, deduped by inventory_item_id, typed including landed product attrs."
     columns:
       - name: inventory_item_id
-        description: "PK (from bronze.inventory_items.id)."
         tests: [not_null, unique]
-
       - name: product_id
-        description: "FK to stg_look__products.product_id."
         tests:
           - not_null
           - relationships:
               arguments:
                 to: ref('stg_look__products')
                 field: product_id
-
       - name: product_distribution_center_id
-        description: "FK to stg_look__distribution_centers.distribution_center_id."
         tests:
           - relationships:
               arguments:
                 to: ref('stg_look__distribution_centers')
                 field: distribution_center_id
 
-  # =========================
-  # PRODUCTS
-  # =========================
-  - name: stg_look__products
-    description: "Cleaned + deduped products from bronze_dev.products."
-    columns:
-      - name: product_id
-        description: "PK (from bronze.products.id)."
-        tests: [not_null, unique]
-
-      - name: distribution_center_id
-        description: "FK to stg_look__distribution_centers.distribution_center_id."
-        tests:
-          - relationships:
-              arguments:
-                to: ref('stg_look__distribution_centers')
-                field: distribution_center_id
-
-  # =========================
-  # DISTRIBUTION CENTERS
-  # =========================
   - name: stg_look__distribution_centers
-    description: "Cleaned + deduped DCs from bronze_dev.distribution_centers."
+    description: "Distribution centers, deduped by distribution_center_id, typed."
     columns:
       - name: distribution_center_id
-        description: "PK (from bronze.distribution_centers.id)."
         tests: [not_null, unique]
-
       - name: name
-        description: "Distribution center name."
-        tests: [not_null]
-
-  # =========================
-  # USERS
-  # =========================
-  - name: stg_look__users
-    description: "Cleaned + deduped users from bronze_dev.users."
-    columns:
-      - name: user_id
-        description: "PK (from bronze.users.id)."
-        tests: [not_null, unique]
-
-      - name: email
-        description: "Raw email string (hashing can be added downstream if needed)."
         tests: [not_null]

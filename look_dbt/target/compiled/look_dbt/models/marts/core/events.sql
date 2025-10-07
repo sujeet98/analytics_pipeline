@@ -1,17 +1,16 @@
+-- Event fact at event_id grain.
+-- Table materialization is fine (modest volume; simple shape).
+
 
 
 select
   event_id,
   user_id,
-  session_id,
-  sequence_number,
-  created_at,
   event_type,
-  city,
-  state,
-  postal_code,
+  created_at,
   browser,
   traffic_source,
   uri,
-  ip_address
-from sujeet_data_analytics_workspace.silver_dev.stg_look__events
+  city, state, postal_code, ip_address,
+  src_ingest_ts
+from sujeet_data_analytics_workspace.silver_dev.stg_look__events;

@@ -1,22 +1,107 @@
+# selectors.yml
 selectors:
-  - name: staging_look
+
+  - name: root_project_only
+    description: "Default: only resources defined in the root project."
+    default: true
     definition:
-      method: fqn
-      value: look_dbt.staging.look
+      method: package
+      value: look_dbt
+
+  - name: staging_only
+    description: "Build just the staging models under models/staging/look."
+    definition:
+      method: path
+      value: models/staging/look
+      indirect_selection: eager
+
+  - name: intermediate_only
+    description: "Build only intermediate models (business transforms)."
+    definition:
+      method: path
+      value: models/intermediate/commerce
+      indirect_selection: eager
+
+  - name: marts_core
+    description: "Build only core marts (facts & dims) without upstream."
+    definition:
+      method: path
+      value: models/marts/core
+      indirect_selection: eager
 
   - name: marts_core_with_ancestors
+    description: "Build core marts and everything they depend on (stg + int)."
+    definition:
+      method: path
+      value: models/marts/core
+      parents: true
+      parents_depth: 50
+      indirect_selection: eager
+
+  - name: all_models
+    description: "Select every model in the project."
+    definition:
+      method: path
+      value: models
+      indirect_selection: eager
+
+  - name: ci_changed
+    description: "Changed nodes and their downstream dependents (for CI)."
+    definition:
+      method: state
+      value: modified
+      children: true
+      children_depth: 50
+      indirect_selection: buildable
+
+  - name: smoke
+    description: "Quick canary run of critical marts + parents."
     definition:
       union:
         - method: fqn
-          value: look_dbt.marts.core
+          value: events
           parents: true
+          parents_depth: 50
+          indirect_selection: eager
+        - method: fqn
+          value: orders
+          parents: true
+          parents_depth: 50
+          indirect_selection: eager
+        - method: fqn
+          value: users_dim
+          parents: true
+          parents_depth: 50
+          indirect_selection: eager
+        - method: fqn
+          value: products_dim
+          parents: true
+          parents_depth: 50
+          indirect_selection: eager
 
-  - name: changed_plus_parents
+  - name: freshness
+    description: "All sources for freshness checks."
+    definition:
+      method: resource_type
+      value: source
+
+  - name: marts_non_incremental
+    description: "Marts excluding models materialized as incremental."
     definition:
       union:
-        - method: state
-          value: modified
-          parents: true
-        - method: state
-          value: new
-          parents: true
+        - method: path
+          value: models/marts/core
+          indirect_selection: eager
+        - exclude:
+            - method: config
+              value: materialized:incremental
+
+  - name: marts_core_with_ancestors_light
+    description: "Marts + ancestors but excludes tag:heavy."
+    definition:
+      intersection:
+        - method: selector
+          value: marts_core_with_ancestors
+        - exclude:
+            - method: tag
+              value: heavy

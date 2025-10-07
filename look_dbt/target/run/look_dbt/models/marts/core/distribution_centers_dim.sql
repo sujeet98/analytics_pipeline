@@ -4,13 +4,17 @@
   
   (
     
-      distribution_center_id bigint COMMENT 'PK (from bronze.distribution_centers.id).',
+      distribution_center_id bigint,
     
-      name string COMMENT 'Distribution center name.',
+      distribution_center_name string,
     
-      latitude double,
+      distribution_center_latitude double,
     
-      longitude double
+      distribution_center_longitude double,
+    
+      distribution_center_geom string,
+    
+      src_ingest_ts timestamp
     
     
   )

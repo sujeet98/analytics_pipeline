@@ -12,7 +12,7 @@
 
 with child as (
     select inventory_item_id as from_field
-    from sujeet_data_analytics_workspace.silver_dev.stg_look__order_items
+    from (select * from sujeet_data_analytics_workspace.silver_dev.stg_look__order_items where status in ('Complete','Shipped','Returned','Cancelled')) dbt_subquery
     where inventory_item_id is not null
 ),
 

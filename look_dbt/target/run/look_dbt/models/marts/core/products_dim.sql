@@ -4,23 +4,25 @@
   
   (
     
-      product_id bigint COMMENT 'Surrogate/product key.',
+      product_id bigint,
     
-      name string,
+      product_name string,
     
-      brand string,
+      product_brand string,
     
-      category string,
+      product_category string,
     
-      department string,
+      product_department string,
     
-      sku string,
+      product_sku string,
     
       retail_price decimal(18, 2),
     
       cost decimal(18, 2),
     
-      distribution_center_id bigint COMMENT 'FK to stg_look__distribution_centers.distribution_center_id.'
+      distribution_center_id bigint,
+    
+      src_ingest_ts timestamp
     
     
   )
@@ -32,7 +34,7 @@
   
   
   
-  comment 'Product dimension at product_id grain.'
+  
   
 
   

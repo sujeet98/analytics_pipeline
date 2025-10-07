@@ -5,6 +5,7 @@
 .user.yml
 package-lock.yml
 /look_dbt/logs/
+/look_dbt/profiles.yml
 
 # Python/OS cruft (if present)
 __pycache__/
@@ -14,4 +15,3 @@ __pycache__/
 # Environment variable files
 *.env
 *.dbt_env
-/look_dbt/profiles.yml
