@@ -1,42 +1,47 @@
--- Staging model: Inventory Items
--- Dedup by inventory_item_id; keep landed product attributes (name/brand/etc.) for convenience.
 
-with raw as (
+
+with src as (
   select
-    id as inventory_item_id,
-    product_id, created_at, sold_at, cost,
-    product_category, product_name, product_brand, product_retail_price,
-    product_department, product_sku, product_distribution_center_id,
-    coalesce(
-      ingest_ts_utc,
-      to_timestamp(concat(ingest_date, ' ', run_ts), 'yyyy-MM-dd HHmmss')
-    ) as src_ingest_ts
+    cast(id as bigint)                       as id,
+    cast(product_id as bigint)               as product_id,
+    cast(created_at as timestamp)            as created_at,
+    cast(sold_at as timestamp)               as sold_at,
+    cast(cost as double)                     as unit_cost,
+    nullif(product_category,'')              as product_category,
+    nullif(product_name,'')                  as product_name,
+    nullif(product_brand,'')                 as product_brand,
+    cast(product_retail_price as double)     as retail_price,
+    nullif(product_department,'')            as product_department,
+    nullif(product_sku,'')                   as product_sku,
+    cast(product_distribution_center_id as bigint) as product_distribution_center_id,
+    cast(ingest_ts_utc as timestamp)         as ingest_ts_utc,
+    cast(ingest_date as string)              as _ingest_date
   from `sujeet_data_analytics_workspace`.`bronze_dev`.`inventory_items`
+  
+    where ingest_ts_utc >= dateadd(day, -2, (select coalesce(max(ingest_ts_utc), '1900-01-01') from sujeet_data_analytics_workspace.silver_dev.stg_look__inventory_items))
+  
 ),
-
-ranked as (
-  select
-    r.*,
-    row_number() over (
-      partition by r.inventory_item_id
-      order by r.src_ingest_ts desc
-    ) as rn
-  from raw r
+dedup as (
+  select *
+  from (
+    select *,
+      row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
+    from src
+  ) where rn = 1
 )
-
 select
-  cast(inventory_item_id as bigint)           as inventory_item_id,
-  cast(product_id as bigint)                  as product_id,
-  cast(created_at as timestamp)               as created_at,
-  cast(sold_at as timestamp)                  as sold_at,
-  cast(cost as decimal(18,2))                 as cost,
-  trim(product_category)                      as product_category,
-  trim(product_name)                          as product_name,
-  trim(product_brand)                         as product_brand,
-  cast(product_retail_price as decimal(18,2)) as product_retail_price,
-  trim(product_department)                    as product_department,
-  trim(product_sku)                           as product_sku,
-  cast(product_distribution_center_id as bigint) as product_distribution_center_id,
-  src_ingest_ts
-from ranked
-where rn = 1;
+  id,
+  product_id,
+  created_at,
+  sold_at,
+  unit_cost,
+  product_category,
+  product_name,
+  product_brand,
+  retail_price,
+  product_department,
+  product_sku,
+  product_distribution_center_id,
+  ingest_ts_utc,
+  _ingest_date
+from dedup;

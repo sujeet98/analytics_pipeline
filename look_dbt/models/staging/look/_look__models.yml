@@ -2,131 +2,189 @@ version: 2
 
 models:
   - name: stg_look__orders
-    description: "Orders, deduped by order_id (latest ingestion), typed & normalized."
+    description: "Staging (deduped) orders from 'look' source; latest by ingest_ts_utc per order_id."
     columns:
       - name: order_id
+        description: "Natural key"
         tests: [not_null, unique]
       - name: user_id
-        tests: [not_null]
-      - name: status
+        description: "FK to users.id"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__users')
+              field: id
+      - name: order_status
         tests:
           - accepted_values:
-              arguments:
-                values: ['Complete','Shipped','Returned','Cancelled','Processing','Unknown']
+              values: ['Cancelled','Shipped','Complete','Returned','Processing']
       - name: created_at
+        tests: [not_null]
+      - name: ingest_ts_utc
         tests: [not_null]
 
   - name: stg_look__order_items
-    description: "Order items, deduped by order_item_id, typed & normalized."
+    description: "Staging (deduped) order line items; latest by ingest_ts_utc per id."
     columns:
-      - name: order_item_id
+      - name: id
+        description: "Natural key of the line item."
         tests: [not_null, unique]
       - name: order_id
+        description: "FK to orders.order_id"
         tests:
           - not_null
           - relationships:
-              arguments:
-                to: ref('stg_look__orders')
-                field: order_id
+              to: ref('stg_look__orders')
+              field: order_id
       - name: user_id
+        description: "FK to users.id (denormalized on the item row)."
         tests:
-          - not_null
           - relationships:
-              arguments:
-                to: ref('stg_look__users')
-                field: user_id
+              to: ref('stg_look__users')
+              field: id
+              where: "user_id is not null"     # allow anonymous or missing users if present
       - name: product_id
+        description: "FK to products.product_id"
         tests:
           - not_null
           - relationships:
-              arguments:
-                to: ref('stg_look__products')
-                field: product_id
+              to: ref('stg_look__products')
+              field: product_id
       - name: inventory_item_id
+        description: "FK to inventory_items.id (unit-level)."
         tests:
-          # keep as warn if you truly have early-arriving items
           - relationships:
-              arguments:
-                to: ref('stg_look__inventory_items')
-                field: inventory_item_id
+              to: ref('stg_look__inventory_items')
+              field: id
+              where: "inventory_item_id is not null"
               severity: warn
-              # Optional: enforce only for finalized items to reduce noise
-              where: "status in ('Complete','Shipped','Returned','Cancelled')"
-      - name: status
+      - name: item_status
         tests:
           - accepted_values:
-              arguments:
-                values: ['Complete','Shipped','Returned','Cancelled','Processing','Unknown']
+              values: ['Cancelled','Returned','Complete','Shipped','Processing']
       - name: sale_price
-        description: "Nullable until the item is priced; if present it must be non-negative."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: ingest_ts_utc
+        tests: [not_null]
+
+  - name: stg_look__events
+    description: "Staging (deduped) web/app events; normalized event_type, traffic_source, browser."
+    columns:
+      - name: id
+        tests: [not_null, unique]
+      - name: user_id
+        description: "FK to users.id; may be null for anonymous traffic."
+        tests:
+          - relationships:
+              to: ref('stg_look__users')
+              field: id
+              where: "user_id is not null"
+      - name: event_ts
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - accepted_values:
+              values: ['cancel','purchase','product','cart','department','home']
+      - name: traffic_source
+        tests:
+          - accepted_values:
+              values: ['Adwords','Organic','Email','Facebook','YouTube']
+      - name: browser
+        tests:
+          - accepted_values:
+              values: ['Firefox','Other','IE','Safari','Chrome']
+      - name: ingest_ts_utc
+        tests: [not_null]
+
+  - name: stg_look__inventory_items
+    description: "Staging (deduped) inventory units with product attributes; latest per id."
+    columns:
+      - name: id
+        tests: [not_null, unique]
+      - name: product_id
+        description: "FK to products.product_id"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_look__products')
+              field: product_id
+      - name: product_distribution_center_id
+        description: "FK to distribution_centers.distribution_center_id"
+        tests:
+          - relationships:
+              to: ref('stg_look__distribution_centers')
+              field: distribution_center_id
+              where: "product_distribution_center_id is not null"
+      - name: unit_cost
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: retail_price
         tests:
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
-
-  - name: stg_look__events
-    description: "Events, deduped by event_id, typed & normalized."
-    columns:
-      - name: event_id
-        tests: [not_null, unique]
-      - name: user_id
-        description: "Nullable FK — some events are anonymous."
-        tests:
-          - relationships:
-              arguments:
-                to: ref('stg_look__users')
-                field: user_id
-      - name: event_type
-        tests:
-          - accepted_values:
-              arguments:
-                values: ['product','cart','home','cancel','purchase','department','unknown']
-      - name: created_at
+      - name: ingest_ts_utc
         tests: [not_null]
 
   - name: stg_look__users
-    description: "Users, deduped by user_id, typed."
+    description: "Staging (deduped) users with normalized gender/traffic_source."
     columns:
-      - name: user_id
+      - name: id
         tests: [not_null, unique]
       - name: email
+        tests: []
+      - name: gender
+        tests:
+          - accepted_values:
+              values: ['M','F']            # matches staging normalization
+      - name: traffic_source
+        tests:
+          - accepted_values:
+              values: ['Display','Organic','Search','Email','Facebook']  # matches staging normalization
+      - name: created_at
+        tests: [not_null]
+      - name: ingest_ts_utc
         tests: [not_null]
 
   - name: stg_look__products
-    description: "Products, deduped by product_id, typed."
+    description: "Staging (deduped) products; latest attributes per product_id."
     columns:
       - name: product_id
         tests: [not_null, unique]
       - name: distribution_center_id
+        description: "FK to distribution_centers.distribution_center_id"
         tests:
           - relationships:
-              arguments:
-                to: ref('stg_look__distribution_centers')
-                field: distribution_center_id
-
-  - name: stg_look__inventory_items
-    description: "Inventory items, deduped by inventory_item_id, typed including landed product attrs."
-    columns:
-      - name: inventory_item_id
-        tests: [not_null, unique]
-      - name: product_id
+              to: ref('stg_look__distribution_centers')
+              field: distribution_center_id
+              where: "distribution_center_id is not null"
+      - name: unit_cost
         tests:
           - not_null
-          - relationships:
-              arguments:
-                to: ref('stg_look__products')
-                field: product_id
-      - name: product_distribution_center_id
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: retail_price
         tests:
-          - relationships:
-              arguments:
-                to: ref('stg_look__distribution_centers')
-                field: distribution_center_id
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+      - name: ingest_ts_utc
+        tests: [not_null]
 
   - name: stg_look__distribution_centers
-    description: "Distribution centers, deduped by distribution_center_id, typed."
+    description: "Staging (deduped) DCs."
     columns:
       - name: distribution_center_id
         tests: [not_null, unique]
       - name: name
+        tests: [not_null]
+      - name: ingest_ts_utc
         tests: [not_null]

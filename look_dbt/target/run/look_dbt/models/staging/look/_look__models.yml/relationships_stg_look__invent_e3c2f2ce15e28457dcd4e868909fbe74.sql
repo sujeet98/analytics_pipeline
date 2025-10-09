@@ -12,7 +12,7 @@
 
 with child as (
     select product_distribution_center_id as from_field
-    from sujeet_data_analytics_workspace.silver_dev.stg_look__inventory_items
+    from (select * from sujeet_data_analytics_workspace.silver_dev.stg_look__inventory_items where product_distribution_center_id is not null) dbt_subquery
     where product_distribution_center_id is not null
 ),
 

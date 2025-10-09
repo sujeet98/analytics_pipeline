@@ -1,83 +1,29 @@
-
+-- back compat for old kwarg name
+  
+  
+  
+  
+  
+  
+      
+          
+          
       
   
-  
-  
-  create or replace view sujeet_data_analytics_workspace.silver_dev.stg_look__orders
-  (
-    `order_id`,
-	`user_id`,
-	`status`,
-	`created_at`,
-	`returned_at`,
-	`shipped_at`,
-	`delivered_at`,
-	`num_of_item`,
-	`src_ingest_ts`
-  )
-  comment 'Orders, deduped by order_id (latest ingestion), typed & normalized.'
-  as (
-    -- Staging model: Orders
--- Responsibilities:
---   1) Derive a unified ingestion timestamp (src_ingest_ts) from bronze partition metadata.
---   2) Deduplicate by order_id using "latest by src_ingest_ts".
---   3) Type and normalize fields (status to a controlled set).
--- Why here (vs separate base): fewer scans, simpler DAG, still transparent via clear comments.
 
-with raw as (
-  select
-    order_id,
-    user_id,
-    status,
-    gender,
-    created_at,
-    returned_at,
-    shipped_at,
-    delivered_at,
-    num_of_item,
-    /* Ingestion lineage: prefer true timestamp; else parse from partition date+time (HHMMSS) */
-    coalesce(
-      ingest_ts_utc,
-      to_timestamp(concat(ingest_date, ' ', run_ts), 'yyyy-MM-dd HHmmss')
-    ) as src_ingest_ts
-  from `sujeet_data_analytics_workspace`.`bronze_dev`.`orders`
-),
+    merge
+    into
+        sujeet_data_analytics_workspace.silver_dev.stg_look__orders as DBT_INTERNAL_DEST
+    using
+        stg_look__orders__dbt_tmp as DBT_INTERNAL_SOURCE
+    on
+        
+              DBT_INTERNAL_SOURCE.order_id <=> DBT_INTERNAL_DEST.order_id
+          
+    when matched
+        then update set
+            `order_id` = DBT_INTERNAL_SOURCE.`order_id`, `user_id` = DBT_INTERNAL_SOURCE.`user_id`, `order_status` = DBT_INTERNAL_SOURCE.`order_status`, `user_gender` = DBT_INTERNAL_SOURCE.`user_gender`, `created_at` = DBT_INTERNAL_SOURCE.`created_at`, `shipped_at` = DBT_INTERNAL_SOURCE.`shipped_at`, `delivered_at` = DBT_INTERNAL_SOURCE.`delivered_at`, `returned_at` = DBT_INTERNAL_SOURCE.`returned_at`, `num_of_item` = DBT_INTERNAL_SOURCE.`num_of_item`, `ingest_ts_utc` = DBT_INTERNAL_SOURCE.`ingest_ts_utc`, `_ingest_date` = DBT_INTERNAL_SOURCE.`_ingest_date`
+    when not matched
+        then insert
+            (`order_id`, `user_id`, `order_status`, `user_gender`, `created_at`, `shipped_at`, `delivered_at`, `returned_at`, `num_of_item`, `ingest_ts_utc`, `_ingest_date`) VALUES (DBT_INTERNAL_SOURCE.`order_id`, DBT_INTERNAL_SOURCE.`user_id`, DBT_INTERNAL_SOURCE.`order_status`, DBT_INTERNAL_SOURCE.`user_gender`, DBT_INTERNAL_SOURCE.`created_at`, DBT_INTERNAL_SOURCE.`shipped_at`, DBT_INTERNAL_SOURCE.`delivered_at`, DBT_INTERNAL_SOURCE.`returned_at`, DBT_INTERNAL_SOURCE.`num_of_item`, DBT_INTERNAL_SOURCE.`ingest_ts_utc`, DBT_INTERNAL_SOURCE.`_ingest_date`)
 
-ranked as (
-  select
-    r.*,
-    row_number() over (
-      partition by r.order_id
-      order by r.src_ingest_ts desc
-    ) as rn
-  from raw r
-)
-
-select
-  cast(order_id as bigint)  as order_id,
-  cast(user_id as bigint)   as user_id,
-
-  /* Controlled vocabulary for status */
-  case lower(coalesce(status,''))
-    when 'complete'   then 'Complete'
-    when 'shipped'    then 'Shipped'
-    when 'returned'   then 'Returned'
-    when 'cancelled'  then 'Cancelled'
-    when 'processing' then 'Processing'
-    else 'Unknown'
-  end                       as status,
-
-  cast(created_at   as timestamp) as created_at,
-  cast(returned_at  as timestamp) as returned_at,
-  cast(shipped_at   as timestamp) as shipped_at,
-  cast(delivered_at as timestamp) as delivered_at,
-
-  cast(num_of_item as bigint)     as num_of_item,
-
-  src_ingest_ts
-from ranked
-where rn = 1
-  )
-
-
-    

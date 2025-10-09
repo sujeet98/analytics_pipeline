@@ -1,77 +1,29 @@
-
+-- back compat for old kwarg name
+  
+  
+  
+  
+  
+  
+      
+          
+          
       
   
-  
-  
-  create or replace view sujeet_data_analytics_workspace.silver_dev.stg_look__users
-  (
-    `user_id`,
-	`first_name`,
-	`last_name`,
-	`email`,
-	`age`,
-	`gender`,
-	`state`,
-	`street_address`,
-	`postal_code`,
-	`city`,
-	`country`,
-	`latitude`,
-	`longitude`,
-	`traffic_source`,
-	`created_at`,
-	`user_geom`,
-	`src_ingest_ts`
-  )
-  comment 'Users, deduped by user_id, typed.'
-  as (
-    -- Staging model: Users
--- Dedup by user_id; keep PII here so downstream marts can choose what to expose.
 
-with raw as (
-  select
-    id as user_id,
-    first_name, last_name, email, age, gender,
-    state, street_address, postal_code, city, country,
-    latitude, longitude, traffic_source, created_at, user_geom,
-    coalesce(
-      ingest_ts_utc,
-      to_timestamp(concat(ingest_date, ' ', run_ts), 'yyyy-MM-dd HHmmss')
-    ) as src_ingest_ts
-  from `sujeet_data_analytics_workspace`.`bronze_dev`.`users`
-),
+    merge
+    into
+        sujeet_data_analytics_workspace.silver_dev.stg_look__users as DBT_INTERNAL_DEST
+    using
+        stg_look__users__dbt_tmp as DBT_INTERNAL_SOURCE
+    on
+        
+              DBT_INTERNAL_SOURCE.id <=> DBT_INTERNAL_DEST.id
+          
+    when matched
+        then update set
+            `id` = DBT_INTERNAL_SOURCE.`id`, `first_name` = DBT_INTERNAL_SOURCE.`first_name`, `last_name` = DBT_INTERNAL_SOURCE.`last_name`, `email` = DBT_INTERNAL_SOURCE.`email`, `age` = DBT_INTERNAL_SOURCE.`age`, `gender` = DBT_INTERNAL_SOURCE.`gender`, `state` = DBT_INTERNAL_SOURCE.`state`, `street_address` = DBT_INTERNAL_SOURCE.`street_address`, `postal_code` = DBT_INTERNAL_SOURCE.`postal_code`, `city` = DBT_INTERNAL_SOURCE.`city`, `country` = DBT_INTERNAL_SOURCE.`country`, `latitude` = DBT_INTERNAL_SOURCE.`latitude`, `longitude` = DBT_INTERNAL_SOURCE.`longitude`, `traffic_source` = DBT_INTERNAL_SOURCE.`traffic_source`, `created_at` = DBT_INTERNAL_SOURCE.`created_at`, `ingest_ts_utc` = DBT_INTERNAL_SOURCE.`ingest_ts_utc`, `_ingest_date` = DBT_INTERNAL_SOURCE.`_ingest_date`
+    when not matched
+        then insert
+            (`id`, `first_name`, `last_name`, `email`, `age`, `gender`, `state`, `street_address`, `postal_code`, `city`, `country`, `latitude`, `longitude`, `traffic_source`, `created_at`, `ingest_ts_utc`, `_ingest_date`) VALUES (DBT_INTERNAL_SOURCE.`id`, DBT_INTERNAL_SOURCE.`first_name`, DBT_INTERNAL_SOURCE.`last_name`, DBT_INTERNAL_SOURCE.`email`, DBT_INTERNAL_SOURCE.`age`, DBT_INTERNAL_SOURCE.`gender`, DBT_INTERNAL_SOURCE.`state`, DBT_INTERNAL_SOURCE.`street_address`, DBT_INTERNAL_SOURCE.`postal_code`, DBT_INTERNAL_SOURCE.`city`, DBT_INTERNAL_SOURCE.`country`, DBT_INTERNAL_SOURCE.`latitude`, DBT_INTERNAL_SOURCE.`longitude`, DBT_INTERNAL_SOURCE.`traffic_source`, DBT_INTERNAL_SOURCE.`created_at`, DBT_INTERNAL_SOURCE.`ingest_ts_utc`, DBT_INTERNAL_SOURCE.`_ingest_date`)
 
-ranked as (
-  select
-    r.*,
-    row_number() over (
-      partition by r.user_id
-      order by r.src_ingest_ts desc
-    ) as rn
-  from raw r
-)
-
-select
-  cast(user_id as bigint)         as user_id,
-  trim(first_name)                as first_name,
-  trim(last_name)                 as last_name,
-  trim(email)                     as email,
-  cast(age as bigint)             as age,
-  trim(gender)                    as gender,
-  trim(state)                     as state,
-  trim(street_address)            as street_address,
-  trim(postal_code)               as postal_code,
-  trim(city)                      as city,
-  trim(country)                   as country,
-  cast(latitude as double)        as latitude,
-  cast(longitude as double)       as longitude,
-  trim(traffic_source)            as traffic_source,
-  cast(created_at as timestamp)   as created_at,
-  trim(user_geom)                 as user_geom,
-  src_ingest_ts
-from ranked
-where rn = 1
-  )
-
-
-    

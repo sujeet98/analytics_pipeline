@@ -1,22 +1,83 @@
 version: 2
 
 sources:
-  - name: bronze_dev
+  - name: look
     database: sujeet_data_analytics_workspace
     schema: bronze_dev
     description: "Raw incremental ingests from Databricks Autoloader for TheLook sample data."
+    tags: ["source", "bronze", "look"]
+    quoting:
+      database: true
+      schema: true
+      identifier: true
+    freshness:
+      warn_after: {count: 2, period: day}     # tune to your SLA
+      error_after: {count: 5, period: day}
+    loaded_at_field: ingest_ts_utc
+
     tables:
       - name: orders
         description: "Raw orders; duplicates may exist across overlapping ingest partitions."
+        columns:
+          - name: order_id
+            description: "Natural key of the order."
+          - name: user_id
+            description: "Buyer user id."
+          - name: ingest_ts_utc
+            description: "Ingest watermark used for freshness and incrementals."
+
       - name: order_items
         description: "Raw order items; duplicates may exist across overlapping ingest partitions."
+        columns:
+          - name: id
+            description: "Natural key of the line item."
+          - name: order_id
+            description: "FK to orders."
+          - name: product_id
+            description: "FK to products."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."
+
       - name: events
         description: "Raw web/app events; may be anonymous."
+        columns:
+          - name: id
+            description: "Event id."
+          - name: user_id
+            description: "May be null for anonymous traffic."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."
+
       - name: users
         description: "Raw users."
+        columns:
+          - name: id
+            description: "User id."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."
+
       - name: products
         description: "Raw products."
+        columns:
+          - name: id
+            description: "Product id."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."
+
       - name: inventory_items
         description: "Raw inventory items; includes product attributes as landed."
+        columns:
+          - name: id
+            description: "Inventory unit id."
+          - name: product_id
+            description: "FK to products."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."
+
       - name: distribution_centers
         description: "Raw distribution centers."
+        columns:
+          - name: id
+            description: "Distribution center id."
+          - name: ingest_ts_utc
+            description: "Ingest watermark."

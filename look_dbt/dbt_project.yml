@@ -20,8 +20,6 @@ flags:
   require_explicit_package_overrides_for_builtin_materializations: false
   use_materialization_v2: true
 
-
-# ⬇️ TOP-LEVEL vars (same indentation as `models:`)
 vars:
   catalog_name: 'sujeet_data_analytics_workspace'
   bronze_schema: 'bronze_dev'
@@ -29,24 +27,28 @@ vars:
   gold_schema: 'gold_dev'
 
 models:
+  # Global guards
   +on_schema_change: append_new_columns
   +persist_docs: { relation: true, columns: true }
 
   look_dbt:
+
+    # === STAGING (Silver) ===
+    # Staging does dedupes → persist with incremental MERGE by default.
     staging:
-      # Provide defaults so debug won't fail even if vars aren't loaded
       +schema: '{{ var("silver_schema", "silver_dev") }}'
-      +materialized: view
-      look:
-        +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +materialized: incremental
+      +incremental_strategy: merge
+      +on_schema_change: sync_all_columns
 
+    # === INTERMEDIATE ===
+    # Heavy joins and reused models → persist as TABLE by default.
     intermediate:
-      +materialized: ephemeral
-      commerce:
-        +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +materialized: table
 
+    # === MARTS (Gold) ===
+    # Tables by default; facts remain incremental in their model files (MERGE).
     marts:
       +schema: '{{ var("gold_schema", "gold_dev") }}'
       +materialized: table
-      core:
-        +schema: '{{ var("gold_schema", "gold_dev") }}'

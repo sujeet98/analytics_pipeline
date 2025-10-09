@@ -4,7 +4,7 @@
 
 with child as (
     select distribution_center_id as from_field
-    from sujeet_data_analytics_workspace.silver_dev.stg_look__products
+    from (select * from sujeet_data_analytics_workspace.silver_dev.stg_look__products where distribution_center_id is not null) dbt_subquery
     where distribution_center_id is not null
 ),
 

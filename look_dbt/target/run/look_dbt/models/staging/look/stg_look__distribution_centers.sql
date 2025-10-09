@@ -1,53 +1,29 @@
-
+-- back compat for old kwarg name
+  
+  
+  
+  
+  
+  
+      
+          
+          
       
   
-  
-  
-  create or replace view sujeet_data_analytics_workspace.silver_dev.stg_look__distribution_centers
-  (
-    `distribution_center_id`,
-	`name`,
-	`latitude`,
-	`longitude`,
-	`distribution_center_geom`,
-	`src_ingest_ts`
-  )
-  comment 'Distribution centers, deduped by distribution_center_id, typed.'
-  as (
-    -- Staging model: Distribution Centers
--- Dedup by distribution_center_id.
 
-with raw as (
-  select
-    id as distribution_center_id,
-    name, latitude, longitude, distribution_center_geom,
-    coalesce(
-      ingest_ts_utc,
-      to_timestamp(concat(ingest_date, ' ', run_ts), 'yyyy-MM-dd HHmmss')
-    ) as src_ingest_ts
-  from `sujeet_data_analytics_workspace`.`bronze_dev`.`distribution_centers`
-),
+    merge
+    into
+        sujeet_data_analytics_workspace.silver_dev.stg_look__distribution_centers as DBT_INTERNAL_DEST
+    using
+        stg_look__distribution_centers__dbt_tmp as DBT_INTERNAL_SOURCE
+    on
+        
+              DBT_INTERNAL_SOURCE.distribution_center_id <=> DBT_INTERNAL_DEST.distribution_center_id
+          
+    when matched
+        then update set
+            `distribution_center_id` = DBT_INTERNAL_SOURCE.`distribution_center_id`, `name` = DBT_INTERNAL_SOURCE.`name`, `latitude` = DBT_INTERNAL_SOURCE.`latitude`, `longitude` = DBT_INTERNAL_SOURCE.`longitude`, `ingest_ts_utc` = DBT_INTERNAL_SOURCE.`ingest_ts_utc`, `_ingest_date` = DBT_INTERNAL_SOURCE.`_ingest_date`
+    when not matched
+        then insert
+            (`distribution_center_id`, `name`, `latitude`, `longitude`, `ingest_ts_utc`, `_ingest_date`) VALUES (DBT_INTERNAL_SOURCE.`distribution_center_id`, DBT_INTERNAL_SOURCE.`name`, DBT_INTERNAL_SOURCE.`latitude`, DBT_INTERNAL_SOURCE.`longitude`, DBT_INTERNAL_SOURCE.`ingest_ts_utc`, DBT_INTERNAL_SOURCE.`_ingest_date`)
 
-ranked as (
-  select
-    r.*,
-    row_number() over (
-      partition by r.distribution_center_id
-      order by r.src_ingest_ts desc
-    ) as rn
-  from raw r
-)
-
-select
-  cast(distribution_center_id as bigint) as distribution_center_id,
-  trim(name)                             as name,
-  cast(latitude as double)               as latitude,
-  cast(longitude as double)              as longitude,
-  trim(distribution_center_geom)         as distribution_center_geom,
-  src_ingest_ts
-from ranked
-where rn = 1
-  )
-
-
-    
