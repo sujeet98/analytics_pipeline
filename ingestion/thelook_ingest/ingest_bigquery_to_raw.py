@@ -35,8 +35,10 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 import os, datetime, json, uuid
+import sys, pathlib
+repo_root = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(repo_root)) if str(repo_root) not in sys.path else None
 from typing import Optional, List, Dict
-
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
@@ -44,7 +46,7 @@ from pyspark.dbutils import DBUtils
 
 # If you prefer env vars instead of a config helper, you can swap out these imports.
 # In your repo you already have a config module; we’ll keep using it:
-from .config import (
+from ingestion.thelook_ingest.config import (
     get_project,            # returns GCP project for BQ billing
     get_bq_auth_options,    # returns dict of Spark BigQuery connector auth options
 )
