@@ -170,11 +170,12 @@ def run_one_table(table: str):
     query.awaitTermination()
     print(f"{table}: done (Auto Loader availableNow run completed).")
 
-
+def main():
+    for t in TABLES:
+        run_one_table(t)
+    print("\nAll tables processed.")
 # ------------------------------------------------------------------------------
 # 3) Run all tables sequentially (safe & simple on small clusters)
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
-    for t in TABLES:
-        run_one_table(t)
-    print("\nAll tables processed.")
+    main()

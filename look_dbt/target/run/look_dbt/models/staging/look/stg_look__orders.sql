@@ -1,29 +1,42 @@
--- back compat for old kwarg name
+
+    
+  create or replace table sujeet_data_analytics_workspace.silver_dev.stg_look__orders
+  
+  (
+    
+      order_id bigint COMMENT 'Natural key',
+    
+      user_id bigint COMMENT 'FK to users.id',
+    
+      order_status string,
+    
+      user_gender string,
+    
+      created_at timestamp,
+    
+      shipped_at timestamp,
+    
+      delivered_at timestamp,
+    
+      returned_at timestamp,
+    
+      num_of_item int,
+    
+      ingest_ts_utc timestamp,
+    
+      _ingest_date string
+    
+    
+  )
+
+  
+  using delta
+  
+  partitioned by (_ingest_date)
   
   
   
-  
-  
-  
-      
-          
-          
-      
+  comment 'Staging (deduped) orders from \'look\' source; latest by ingest_ts_utc per order_id.'
   
 
-    merge
-    into
-        sujeet_data_analytics_workspace.silver_dev.stg_look__orders as DBT_INTERNAL_DEST
-    using
-        stg_look__orders__dbt_tmp as DBT_INTERNAL_SOURCE
-    on
-        
-              DBT_INTERNAL_SOURCE.order_id <=> DBT_INTERNAL_DEST.order_id
-          
-    when matched
-        then update set
-            `order_id` = DBT_INTERNAL_SOURCE.`order_id`, `user_id` = DBT_INTERNAL_SOURCE.`user_id`, `order_status` = DBT_INTERNAL_SOURCE.`order_status`, `user_gender` = DBT_INTERNAL_SOURCE.`user_gender`, `created_at` = DBT_INTERNAL_SOURCE.`created_at`, `shipped_at` = DBT_INTERNAL_SOURCE.`shipped_at`, `delivered_at` = DBT_INTERNAL_SOURCE.`delivered_at`, `returned_at` = DBT_INTERNAL_SOURCE.`returned_at`, `num_of_item` = DBT_INTERNAL_SOURCE.`num_of_item`, `ingest_ts_utc` = DBT_INTERNAL_SOURCE.`ingest_ts_utc`, `_ingest_date` = DBT_INTERNAL_SOURCE.`_ingest_date`
-    when not matched
-        then insert
-            (`order_id`, `user_id`, `order_status`, `user_gender`, `created_at`, `shipped_at`, `delivered_at`, `returned_at`, `num_of_item`, `ingest_ts_utc`, `_ingest_date`) VALUES (DBT_INTERNAL_SOURCE.`order_id`, DBT_INTERNAL_SOURCE.`user_id`, DBT_INTERNAL_SOURCE.`order_status`, DBT_INTERNAL_SOURCE.`user_gender`, DBT_INTERNAL_SOURCE.`created_at`, DBT_INTERNAL_SOURCE.`shipped_at`, DBT_INTERNAL_SOURCE.`delivered_at`, DBT_INTERNAL_SOURCE.`returned_at`, DBT_INTERNAL_SOURCE.`num_of_item`, DBT_INTERNAL_SOURCE.`ingest_ts_utc`, DBT_INTERNAL_SOURCE.`_ingest_date`)
-
+  

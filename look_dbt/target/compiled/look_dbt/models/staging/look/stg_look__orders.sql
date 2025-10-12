@@ -1,6 +1,14 @@
 
 
-with source_clean as (
+
+
+with tgt_max as (
+  select
+                     timestamp('1900-01-01')  as max_ts
+  from  (select 1) _ 
+),
+
+source_clean as (
   select
     cast(order_id as bigint) as order_id,
     cast(user_id as bigint)  as user_id,
@@ -15,8 +23,6 @@ with source_clean as (
     cast(ingest_date as string)      as _ingest_date,
     cast(source_table as string)     as source_table
   from `sujeet_data_analytics_workspace`.`bronze_dev`.`orders`
-  
-    where ingest_ts_utc >= dateadd(day, -2, (select coalesce(max(ingest_ts_utc), '1900-01-01') from sujeet_data_analytics_workspace.silver_dev.stg_look__orders))
   
 ),
 normalized as (

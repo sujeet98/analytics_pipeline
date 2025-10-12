@@ -6,6 +6,8 @@
 package-lock.yml
 /look_dbt/logs/
 /look_dbt/profiles.yml
+/dist/
+/ingestion.egg-info/
 
 # Python/OS cruft (if present)
 __pycache__/

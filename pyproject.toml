@@ -1,0 +1,13 @@
+[project]
+name = "ingestion"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ingestion*"] 
+exclude = ["look_dbt*", "venv*", "tests*", "docs*"]
+
+[project.scripts]
+thelook-bq-to-raw = "ingestion.thelook_ingest.ingest_bigquery_to_raw:main"
+thelook-raw-to-bronze-autoloader = "ingestion.thelook_ingest.raw_to_bronze_autoloader:main"

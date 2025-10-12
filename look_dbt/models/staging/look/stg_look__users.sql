@@ -15,7 +15,7 @@ with tgt_max as (
   from {% if is_incremental() %} {{ this }} {% else %} (select 1) _ {% endif %}
 ),
 
-with src as (
+src as (
   select
     cast(id as bigint)                 as id,
     nullif(first_name,'')              as first_name,

@@ -35,9 +35,6 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 import os, datetime, json, uuid
-import sys, pathlib
-repo_root = pathlib.Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(repo_root)) if str(repo_root) not in sys.path else None
 from typing import Optional, List, Dict
 from pyspark.sql import functions as F
 from pyspark.sql import DataFrame

@@ -15,7 +15,7 @@ with tgt_max as (
   from {% if is_incremental() %} {{ this }} {% else %} (select 1) _ {% endif %}
 ),
 
-with source_clean as (
+source_clean as (
   select
     cast(order_id as bigint) as order_id,
     cast(user_id as bigint)  as user_id,
