@@ -30,6 +30,8 @@
     
       item_date date COMMENT 'DATE(COALESCE(delivered_at, created_at)) provided by int layer.',
     
+      created_date date,
+    
       sale_price decimal(10, 0) COMMENT 'Non-negative sales price (source value).',
     
       canonical_updated_at timestamp,
@@ -42,7 +44,7 @@
   
   using delta
   
-  partitioned by (item_date)
+  partitioned by (created_date)
   
   
   

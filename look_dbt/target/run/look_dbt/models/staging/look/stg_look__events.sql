@@ -4,7 +4,7 @@
   
   (
     
-      id bigint,
+      event_id bigint,
     
       user_id bigint COMMENT 'FK to users.id; may be null for anonymous traffic.',
     

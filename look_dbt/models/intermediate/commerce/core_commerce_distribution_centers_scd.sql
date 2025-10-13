@@ -1,10 +1,7 @@
 {{ config(
-  materialized='incremental',
-  incremental_strategy='merge',
+  materialized='table',
   unique_key=['global_dc_id','valid_from'],
   schema='silver_dev',
-  partition_by=['valid_from_date'],
-  cluster_by=['global_dc_id'],
   on_schema_change='sync_all_columns',
   tags=['core','commerce','scd2','distribution_centers']
 ) }}
@@ -14,9 +11,9 @@ with snap as (
   select
     source_system,
     distribution_center_id,
-    name,
-    cast(latitude as double)                 as latitude,
-    cast(longitude as double)                 as longitude,
+    name_norm as name,
+    lat_round                 as latitude,
+    lon_round                 as longitude,
     dbt_valid_from,
     dbt_valid_to
   from {{ ref('snap_distribution_centers__look') }}

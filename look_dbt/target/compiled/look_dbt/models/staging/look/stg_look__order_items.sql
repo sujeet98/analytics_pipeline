@@ -21,34 +21,37 @@ src as (
     cast(delivered_at as timestamp)    as delivered_at,
     cast(returned_at as timestamp)     as returned_at,
     cast(sale_price as double)         as sale_price_raw,
-    cast(ingest_ts_utc as timestamp)   as ingest_ts_utc,
-    cast(ingest_date as string)        as _ingest_date
+    cast(ingest_ts_utc as timestamp)   as ingest_ts_utc
   from `sujeet_data_analytics_workspace`.`bronze_dev`.`order_items`
   
 ),
+
 normalized as (
   select
     *,
-    -- Map to one of: Cancelled, Shipped, Complete, Returned, Processing
     case
       when status_raw in ('cancelled','canceled','void','abandoned') then 'Cancelled'
       when status_raw in ('shipped','in_transit','delivered')        then 'Shipped'
-      when status_raw in ('complete','completed')                     then 'Complete'
-      when status_raw in ('returned','return','refunded')             then 'Returned'
-      when status_raw in ('processing','processed','pending','open')  then 'Processing'
+      when status_raw in ('complete','completed')                    then 'Complete'
+      when status_raw in ('returned','return','refunded')            then 'Returned'
+      when status_raw in ('processing','processed','pending','open') then 'Processing'
       else null
     end as item_status,
-    case when sale_price_raw < 0 then 0.0 else sale_price_raw end as sale_price
+    case when sale_price_raw < 0 then 0.0 else sale_price_raw end as sale_price,
+    date(created_at) as created_date
   from src
 ),
+
 dedup as (
   select *
   from (
     select *,
-      row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
+           row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
     from normalized
-  ) where rn = 1
+  ) t
+  where rn = 1
 )
+
 select
   id,
   order_id,
@@ -62,5 +65,5 @@ select
   returned_at,
   sale_price,
   ingest_ts_utc,
-  _ingest_date
+  created_date
 from dedup;

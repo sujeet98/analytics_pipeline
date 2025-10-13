@@ -26,7 +26,7 @@
   
   using delta
   
-  partitioned by (_snap_date)
+  
   
   
   

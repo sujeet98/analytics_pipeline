@@ -74,7 +74,7 @@ models:
   - name: stg_look__events
     description: "Staging (deduped) web/app events; normalized event_type, traffic_source, browser."
     columns:
-      - name: id
+      - name: event_id
         tests: [not_null, unique]
       - name: user_id
         description: "FK to users.id; may be null for anonymous traffic."

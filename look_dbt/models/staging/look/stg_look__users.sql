@@ -2,7 +2,6 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='id',
-    partition_by=['_ingest_date'],
     tags=['staging','look']
 ) }}
 
@@ -18,8 +17,8 @@ with tgt_max as (
 src as (
   select
     cast(id as bigint)                 as id,
-    nullif(first_name,'')              as first_name,
-    nullif(last_name,'')               as last_name,
+    nullif(trim(first_name),'')        as first_name,
+    nullif(trim(last_name),'')         as last_name,
     lower(nullif(email,''))            as email,
     cast(age as int)                   as age,
     case when lower(gender) in ('m','male') then 'M'
@@ -40,27 +39,31 @@ src as (
     where ingest_ts_utc >= dateadd(day, -{{ lookback_days }}, (select max_ts from tgt_max))
   {% endif %}
 ),
+
 normalized as (
   select
     *,
     case
-      when traffic_source_raw in ('display') then 'Display'
+      when traffic_source_raw in ('display','banner')  then 'Display'
       when traffic_source_raw in ('email','newsletter') then 'Email'
-      when traffic_source_raw in ('facebook','meta') then 'Facebook'
-      when traffic_source_raw in ('display','banner') then 'Organic'
-      when traffic_source_raw in ('search','direct') then 'Search'
+      when traffic_source_raw in ('facebook','meta')    then 'Facebook'
+      when traffic_source_raw in ('organic')            then 'Organic'
+      when traffic_source_raw in ('search')             then 'Search'
+      when traffic_source_raw in ('direct')             then 'Direct'
       else null
     end as traffic_source
   from src
 ),
+
 dedup as (
   select *
   from (
     select *,
-      row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
+           row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
     from normalized
   ) where rn = 1
 )
+
 select
   id,
   first_name,

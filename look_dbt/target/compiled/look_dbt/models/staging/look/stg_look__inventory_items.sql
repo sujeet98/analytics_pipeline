@@ -23,18 +23,20 @@ src as (
     nullif(product_sku,'')                   as product_sku,
     cast(product_distribution_center_id as bigint) as product_distribution_center_id,
     cast(ingest_ts_utc as timestamp)         as ingest_ts_utc,
-    cast(ingest_date as string)              as _ingest_date
+    date(created_at)                          as created_date
   from `sujeet_data_analytics_workspace`.`bronze_dev`.`inventory_items`
   
 ),
+
 dedup as (
   select *
   from (
     select *,
-      row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
+           row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
     from src
   ) where rn = 1
 )
+
 select
   id,
   product_id,
@@ -49,5 +51,5 @@ select
   product_sku,
   product_distribution_center_id,
   ingest_ts_utc,
-  _ingest_date
+  created_date
 from dedup;

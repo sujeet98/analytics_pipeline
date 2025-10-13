@@ -32,7 +32,7 @@
   
   using delta
   
-  partitioned by (valid_from_date)
+  
   
   
   

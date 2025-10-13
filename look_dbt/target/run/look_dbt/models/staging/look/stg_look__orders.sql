@@ -24,7 +24,7 @@
     
       ingest_ts_utc timestamp,
     
-      _ingest_date string
+      created_date date
     
     
   )
@@ -32,7 +32,7 @@
   
   using delta
   
-  partitioned by (_ingest_date)
+  partitioned by (created_date)
   
   
   

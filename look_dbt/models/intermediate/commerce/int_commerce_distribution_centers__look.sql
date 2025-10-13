@@ -2,8 +2,7 @@
   materialized='incremental',
   incremental_strategy='merge',
   unique_key='distribution_center_id',
-  schema='silver_dev',
-  partition_by=['_snap_date'],         
+  schema='silver_dev',        
   on_schema_change='sync_all_columns',
   tags=['intermediate','commerce','look']
 ) }}

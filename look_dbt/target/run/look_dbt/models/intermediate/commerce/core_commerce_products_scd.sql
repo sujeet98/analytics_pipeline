@@ -22,7 +22,7 @@
     
       sku string,
     
-      retail_price decimal(10, 0),
+      retail_price double,
     
       distribution_center_id bigint COMMENT 'FK to distribution_centers.distribution_center_id',
     
@@ -40,7 +40,7 @@
   
   using delta
   
-  partitioned by (valid_from_date)
+  
   
   
   

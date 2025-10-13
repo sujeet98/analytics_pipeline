@@ -22,7 +22,7 @@
   
   using delta
   
-  partitioned by (_ingest_date)
+  
   
   
   

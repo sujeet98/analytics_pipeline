@@ -36,7 +36,7 @@
   
   using delta
   
-  partitioned by (product_snap_date)
+  
   
   
   

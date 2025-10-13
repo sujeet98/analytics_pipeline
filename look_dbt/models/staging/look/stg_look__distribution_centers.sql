@@ -2,7 +2,6 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='distribution_center_id',
-    partition_by=['_ingest_date'],
     tags=['staging','look']
 ) }}
 
@@ -18,12 +17,13 @@ with tgt_max as (
 src as (
   select
     cast(id as bigint)               as distribution_center_id,
-    nullif(name,'')                  as name,
+    nullif(trim(name),'')            as name,
     cast(latitude as double)         as latitude,
     cast(longitude as double)        as longitude,
     cast(ingest_ts_utc as timestamp) as ingest_ts_utc,
     cast(ingest_date as string)      as _ingest_date
   from {{ source('look','distribution_centers') }}
+
   {% if is_incremental() %}
     where ingest_ts_utc >= dateadd(day, -{{ lookback_days }}, (select max_ts from tgt_max))
   {% endif %}

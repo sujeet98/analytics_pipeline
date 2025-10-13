@@ -11,12 +11,13 @@ with tgt_max as (
 src as (
   select
     cast(id as bigint)               as distribution_center_id,
-    nullif(name,'')                  as name,
+    nullif(trim(name),'')            as name,
     cast(latitude as double)         as latitude,
     cast(longitude as double)        as longitude,
     cast(ingest_ts_utc as timestamp) as ingest_ts_utc,
     cast(ingest_date as string)      as _ingest_date
   from `sujeet_data_analytics_workspace`.`bronze_dev`.`distribution_centers`
+
   
 ),
 dedup as (

@@ -26,6 +26,8 @@
     
       item_date date,
     
+      created_date date,
+    
       sale_price double,
     
       source_system string,
@@ -40,7 +42,7 @@
   
   using delta
   
-  partitioned by (item_date)
+  partitioned by (created_date)
   
   
   

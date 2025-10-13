@@ -48,7 +48,7 @@
   
   using delta
   
-  partitioned by (user_created_date)
+  
   
   
   

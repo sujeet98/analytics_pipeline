@@ -5,9 +5,9 @@ with snap as (
   select
     source_system,
     distribution_center_id,
-    name,
-    cast(latitude as double)                 as latitude,
-    cast(longitude as double)                 as longitude,
+    name_norm as name,
+    lat_round                 as latitude,
+    lon_round                 as longitude,
     dbt_valid_from,
     dbt_valid_to
   from sujeet_data_analytics_workspace.snapshots.snap_distribution_centers__look

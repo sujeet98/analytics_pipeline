@@ -2,7 +2,7 @@
     materialized='incremental',
     incremental_strategy='merge',
     unique_key='id',
-    partition_by=['_ingest_date'],
+    partition_by=['created_date'],            
     tags=['staging','look']
 ) }}
 
@@ -30,20 +30,22 @@ src as (
     nullif(product_sku,'')                   as product_sku,
     cast(product_distribution_center_id as bigint) as product_distribution_center_id,
     cast(ingest_ts_utc as timestamp)         as ingest_ts_utc,
-    cast(ingest_date as string)              as _ingest_date
+    date(created_at)                          as created_date
   from {{ source('look','inventory_items') }}
   {% if is_incremental() %}
     where ingest_ts_utc >= dateadd(day, -{{ lookback_days }}, (select max_ts from tgt_max))
   {% endif %}
 ),
+
 dedup as (
   select *
   from (
     select *,
-      row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
+           row_number() over (partition by id order by ingest_ts_utc desc nulls last) as rn
     from src
   ) where rn = 1
 )
+
 select
   id,
   product_id,
@@ -58,5 +60,5 @@ select
   product_sku,
   product_distribution_center_id,
   ingest_ts_utc,
-  _ingest_date
+  created_date
 from dedup;

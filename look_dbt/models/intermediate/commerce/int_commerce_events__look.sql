@@ -1,32 +1,30 @@
 {{ config(
   materialized='incremental',
-  incremental_strategy='merge',
+  incremental_strategy='insert_overwrite',
   unique_key='event_id',
   schema='silver_dev',
-  partition_by=['event_date'],        
+  partition_by=['event_date'],
+  cluster_by=['user_id','session_id'],  
   on_schema_change='sync_all_columns',
   tags=['intermediate','commerce','look']
 ) }}
 
-{% set lookback_days = 2 %}
+{% set lookback_days = 7 %}
 
-with tgt_max as (
+with src as (
   select
-    {% if is_incremental() %} coalesce(max(ingest_ts_utc), timestamp('1900-01-01'))
-    {% else %}                 timestamp('1900-01-01') {% endif %} as max_ts
-  from {% if is_incremental() %} {{ this }} {% else %} (select 1) _ {% endif %}
-),
-src as (
-  select
-    id as event_id,
+    event_id,
     user_id, sequence_number, session_id,
     event_ts, event_date,
     ip_address, city, state, postal_code,
     browser, traffic_source, uri, event_type,
     cast(ingest_ts_utc as timestamp) as ingest_ts_utc
   from {{ ref('stg_look__events') }}
-  where ingest_ts_utc >= dateadd(day, -{{ lookback_days }}, (select max_ts from tgt_max))
+  {% if is_incremental() %}
+    where event_date >= dateadd(day, -{{ lookback_days }}, current_date())
+  {% endif %}
 )
+
 select
   event_id, user_id, sequence_number, session_id,
   event_ts, event_date,

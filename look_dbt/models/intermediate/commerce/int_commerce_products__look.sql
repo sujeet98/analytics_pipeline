@@ -3,7 +3,6 @@
   incremental_strategy='merge',
   unique_key='product_id',
   schema='silver_dev',
-  partition_by=['product_snap_date'], 
   on_schema_change='sync_all_columns',
   tags=['intermediate','commerce','look']
 ) }}

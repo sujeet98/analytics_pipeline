@@ -34,10 +34,6 @@
     
       product_sku string,
     
-      is_in_stock boolean,
-    
-      days_to_sale int,
-    
       canonical_updated_at timestamp,
     
       ingest_ts_utc timestamp
