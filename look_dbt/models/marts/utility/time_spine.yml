@@ -1,0 +1,13 @@
+version: 2
+
+models:
+  - name: time_spine_daily
+    description: >
+      Day-level date spine used by the dbt Semantic Layer/MetricFlow to generate
+      complete time series and handle time-aware joins.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        description: "Calendar date at day grain."
+        granularity: day

@@ -1,0 +1,881 @@
+version: 2
+
+models:
+
+  # =========================
+  # Dimensions (SCD2 tables)
+  # =========================
+  - name: dim_customer
+    description: "Customer dimension (SCD2). One row per version; joins from facts use customer_sk (AS-OF) or the dim_customer_current view (CURRENT)."
+    columns:
+      - name: customer_sk
+        description: "SCD2 surrogate key (PK)."
+        tests: [not_null, unique]
+      - name: global_customer_id
+        description: "Global BK: <source_system>:<user_id>."
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+      - name: valid_to
+        tests: [not_null]
+      - name: is_current
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['global_customer_id','valid_from']
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "valid_from < valid_to"
+
+  - name: dim_product
+    description: "Product dimension (SCD2). Carries product attributes and the product's distribution_center_id for DC lookups."
+    columns:
+      - name: product_sk
+        tests: [not_null, unique]
+      - name: global_product_id
+        tests: [not_null]
+      - name: distribution_center_id
+        description: "BK of distribution center (nullable). Used to resolve dc_sk."
+      - name: valid_from
+        tests: [not_null]
+      - name: valid_to
+        tests: [not_null]
+      - name: is_current
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['global_product_id','valid_from']
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "valid_from < valid_to"
+
+  - name: dim_distribution_center
+    description: "Distribution center dimension (SCD2)."
+    columns:
+      - name: dc_sk
+        tests: [not_null, unique]
+      - name: global_dc_id
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+      - name: valid_to
+        tests: [not_null]
+      - name: is_current
+        tests:
+          - accepted_values:
+              arguments:
+                values: [true, false]
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['global_dc_id','valid_from']
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "valid_from < valid_to"
+
+  # =========================
+  # “Current” dim views
+  # =========================
+  - name: dim_customer_current
+    description: "Convenience view: current rows from dim_customer (is_current = true)."
+    columns:
+      - name: customer_sk
+        tests: [not_null, unique]
+
+  - name: dim_product_current
+    description: "Convenience view: current rows from dim_product (is_current = true)."
+    columns:
+      - name: product_sk
+        tests: [not_null, unique]
+
+  - name: dim_distribution_center_current
+    description: "Convenience view: current rows from dim_distribution_center (is_current = true)."
+    columns:
+      - name: dc_sk
+        tests: [not_null, unique]
+
+  # =========================
+  # Facts — ORDER ITEMS
+  # =========================
+  - name: fact_order_items_asof
+    description: >
+      Order item fact (AS-OF). Grain: 1 row per order_item_id. SKs resolved at created_at with earliest-version fallback.
+      Includes customer_sk, product_sk, and dc_sk (via product's DC).
+    columns:
+      - name: order_item_id
+        tests: [not_null, unique]
+      - name: order_id
+        tests: [not_null]
+      - name: customer_sk
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: product_sk
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: dc_sk
+        description: "Nullable if product has no DC."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_distribution_center')
+                field: dc_sk
+                where: "dc_sk is not null"
+      - name: created_date
+        tests: [not_null]
+      - name: sale_price
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  - name: fact_order_items_current
+    description: >
+      Order item fact (CURRENT). Grain: 1 row per order_item_id. SKs resolved to current dims
+      (customer, product, DC). Uses same grain/columns as AS-OF for easy swapping.
+    columns:
+      - name: order_item_id
+        tests: [not_null, unique]
+      - name: order_id
+        tests: [not_null]
+      - name: customer_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: product_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: dc_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_distribution_center')
+                field: dc_sk
+                where: "dc_sk is not null"
+      - name: created_date
+        tests: [not_null]
+      - name: sale_price
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  # =========================
+  # Facts — ORDERS (lifecycle)
+  # =========================
+  - name: fact_orders_asof
+    description: >
+      Order lifecycle (AS-OF). Grain: 1 row per order_id. customer_sk resolved at created_at with earliest-version fallback.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: customer_sk
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Cancelled','Shipped','Complete','Returned','Processing', null]
+      - name: order_date
+        tests: [not_null]
+      - name: created_at
+        tests: [not_null]
+
+  - name: fact_orders_current
+    description: >
+      Order lifecycle (CURRENT). Grain: 1 row per order_id. customer_sk resolved to current dim.
+    columns:
+      - name: order_id
+        tests: [not_null, unique]
+      - name: customer_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: order_status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Cancelled','Shipped','Complete','Returned','Processing', null]
+      - name: order_date
+        tests: [not_null]
+      - name: created_at
+        tests: [not_null]
+
+  # =========================
+  # Facts — EVENTS
+  # =========================
+  - name: fact_events_asof
+    description: >
+      Event stream (AS-OF). Grain: 1 row per event_id. customer_sk resolved at event_ts with earliest-version fallback (nullable for anonymous).
+      Incremental insert_overwrite by event_date.
+    columns:
+      - name: event_id
+        tests: [not_null, unique]
+      - name: customer_sk
+        description: "Nullable (anonymous events have no customer)."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+                where: "customer_sk is not null"
+      - name: event_date
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['cancel','purchase','product','cart','department','home', null]
+      - name: browser
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Firefox','Other','IE','Safari','Chrome', null]
+      - name: traffic_source
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Adwords','Organic','Email','Facebook','YouTube', null]
+
+  - name: fact_events_current
+    description: >
+      Event stream (CURRENT). Grain: 1 row per event_id. customer_sk resolved to current dim (nullable for anonymous).
+      Incremental insert_overwrite by event_date.
+    columns:
+      - name: event_id
+        tests: [not_null, unique]
+      - name: customer_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+                where: "customer_sk is not null"
+      - name: event_date
+        tests: [not_null]
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['cancel','purchase','product','cart','department','home', null]
+      - name: browser
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Firefox','Other','IE','Safari','Chrome', null]
+      - name: traffic_source
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['Adwords','Organic','Email','Facebook','YouTube', null]
+
+  # =========================
+  # Facts — INVENTORY ITEMS
+  # =========================
+  - name: fact_inventory_items_asof
+    description: >
+      Inventory units (AS-OF). Grain: 1 row per inventory_item_id. product_sk (as-of created_at) and dc_sk (via product) with earliest-version fallback.
+    columns:
+      - name: inventory_item_id
+        tests: [not_null, unique]
+      - name: product_sk
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: dc_sk
+        description: "Nullable if no DC."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_distribution_center')
+                field: dc_sk
+                where: "dc_sk is not null"
+      - name: created_date
+        tests: [not_null]
+      - name: unit_cost
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: retail_price
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  - name: fact_inventory_items_current
+    description: >
+      Inventory units (CURRENT). Grain: 1 row per inventory_item_id. product_sk and dc_sk resolved to current dims.
+    columns:
+      - name: inventory_item_id
+        tests: [not_null, unique]
+      - name: product_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_sk
+      - name: dc_sk
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_distribution_center')
+                field: dc_sk
+                where: "dc_sk is not null"
+      - name: created_date
+        tests: [not_null]
+      - name: unit_cost
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+      - name: retail_price
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  # =========================
+  # Marts — FUNNEL BY CHANNEL for dashboard convenience
+  # =========================
+  - name: mart_funnel_by_channel
+    description: >
+      Daily funnel KPI rollup at session_date × traffic_source.
+      Built from the session-grain funnel (int/mart_session_funnel) with a 24h attribution window.
+      Intended for convenience dashboards; governed metrics should come from the session-grain semantic layer.
+
+    tests:
+      # Composite key should be unique at this grain
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['session_date','traffic_source']
+
+    columns:
+      - name: session_date
+        description: "Date of session start; partition column."
+        tests:
+          - not_null
+
+      - name: traffic_source
+        description: "First observed traffic source for the session (or customer fallback), aggregated at daily grain."
+        tests:
+          - not_null
+
+      - name: sessions
+        description: "Count of sessions on that day and traffic source."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+      - name: step_home_rate
+        description: "Share of sessions that reached the Home step (daily average of 0/1 flags)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_home_rate is not null"
+
+      - name: step_department_rate
+        description: "Share of sessions that reached a Department page (daily average)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_department_rate is not null"
+
+      - name: step_product_rate
+        description: "Share of sessions that viewed a Product page (daily average)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_product_rate is not null"
+
+      - name: step_cart_rate
+        description: "Share of sessions that added to cart (daily average)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_cart_rate is not null"
+
+      - name: step_purchase_rate
+        description: "Share of sessions that triggered a purchase-click event (intent) (daily average)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_purchase_rate is not null"
+
+      - name: step_cancel_rate
+        description: "Share of sessions with a cancel event (daily average)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "step_cancel_rate is not null"
+
+      - name: atc_from_product_rate
+        description: "Conditional rate: (sessions with Product AND ATC) / (sessions with Product)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "atc_from_product_rate is not null"
+
+      - name: purchase_click_from_atc_rate
+        description: "Conditional rate: (sessions with ATC AND purchase-click) / (sessions with ATC)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "purchase_click_from_atc_rate is not null"
+
+      - name: conversion_rate
+        description: "Session conversion: fraction of sessions with ≥1 realized order (session-based)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "conversion_rate is not null"
+
+      - name: purchase_actual_from_atc_rate
+        description: "Conditional rate: (ATC sessions with ≥1 realized order) / (ATC sessions)."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+              where: "purchase_actual_from_atc_rate is not null"
+
+      - name: gmv
+        description: "Total GMV attributed to sessions (sum of mapped orders' item sale_price)."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+      - name: aov
+        description: "Average Order Value = GMV / total orders mapped to sessions. May be null when no orders."
+        tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+              where: "aov is not null"
+
+  # =========================
+  # Marts — SESSION FUNNEL for semantic layer
+  # =========================
+  - name: mart_session_funnel
+    description: >
+      Atomic session-level funnel table (one row per session). Contains step flags,
+      realized orders per session, and GMV attributed to each session. Built from events and orders with a
+      time-based attribution window.
+
+    columns:
+      - name: session_id
+        description: "Unique session identifier."
+        tests: [not_null, unique]
+
+      - name: session_date
+        description: "Date of session start; partition column."
+        tests: [not_null]
+
+      - name: customer_sk
+        description: "Customer surrogate key (nullable for anonymous sessions)."
+
+      - name: session_start_ts
+        description: "Session start timestamp (min event_ts)."
+        tests: [not_null]
+
+      - name: session_end_ts
+        description: "Session end timestamp (max event_ts)."
+        tests: [not_null]
+
+      - name: traffic_source
+        description: "First observed traffic source for the session, or customer fallback if missing."
+        tests: [not_null]
+
+      - name: f_home_event
+        description: "1 if session saw home; else 0."
+
+      - name: f_department_event
+        description: "1 if session saw department; else 0."
+
+      - name: f_product_event
+        description: "1 if session saw a product page; else 0."
+
+      - name: f_cart_event
+        description: "1 if session added to cart; else 0."
+
+      - name: f_purchase_event
+        description: "1 if session triggered purchase click event; else 0."
+
+      - name: f_cancel_event
+        description: "1 if session triggered cancel event; else 0."
+
+      - name: orders_count
+        description: "Number of realized orders mapped to the session (excludes cancelled/void/failed/refunded/returned)."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+      - name: session_gmv
+        description: "Sum of order item sale_price across all orders mapped to the session."
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+
+version: 2
+
+# =========================
+# SEMANTIC MODELS
+# =========================
+semantic_models:
+  - name: mart_session_funnel_semantic_model
+    model: ref('mart_session_funnel')
+    description: >
+      Session-grain funnel model. Defines additive measures (sessions, total_orders, total_gmv, converting_sessions)
+      and step numerators so conversion, AOV, and step/conditional rates are correct at any rollup.
+
+    # Default time dimension when none is specified in a query
+    defaults:
+      agg_time_dimension: session_date
+
+    # Business identifiers at this grain
+    entities:
+      - name: session
+        type: primary          # primary key for this grain
+        expr: session_id
+      # NOTE: traffic_source is intentionally NOT an entity to avoid validity window requirements.
+
+    # Dimensions available for slicing and time bucketing
+    dimensions:
+      - name: session_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: traffic_source
+        type: categorical
+
+    # ADDITIVE measures only (sums/counts). Avoid pre-averaged rates here.
+    measures:
+      # Core additive measures
+      - name: sessions
+        description: "Distinct session count."
+        agg: count_distinct
+        expr: session_id
+
+      - name: total_orders
+        description: "Total realized orders mapped to sessions (multiple orders per session allowed)."
+        agg: sum
+        expr: orders_count
+
+      - name: total_gmv
+        description: "GMV attributed to sessions (sum of mapped orders' item sale_price per session)."
+        agg: sum
+        expr: session_gmv
+
+      - name: converting_sessions
+        description: "Number of sessions with ≥ 1 realized order."
+        agg: sum
+        expr: case when orders_count > 0 then 1 else 0 end
+
+      # Step numerators (how many sessions reached each step)
+      - name: home_step_sessions
+        description: "Sessions that reached the home step."
+        agg: sum
+        expr: case when f_home_event = 1 then 1 else 0 end
+
+      - name: department_step_sessions
+        description: "Sessions that reached a department page."
+        agg: sum
+        expr: case when f_department_event = 1 then 1 else 0 end
+
+      - name: product_step_sessions
+        description: "Sessions that viewed a product."
+        agg: sum
+        expr: case when f_product_event = 1 then 1 else 0 end
+
+      - name: cart_step_sessions
+        description: "Sessions that added to cart."
+        agg: sum
+        expr: case when f_cart_event = 1 then 1 else 0 end
+
+      - name: purchase_click_sessions
+        description: "Sessions that triggered a purchase click event (intent)."
+        agg: sum
+        expr: case when f_purchase_event = 1 then 1 else 0 end
+
+      - name: cancel_sessions
+        description: "Sessions where a cancel event occurred."
+        agg: sum
+        expr: case when f_cancel_event = 1 then 1 else 0 end
+
+      # Conditional numerators used for pass-through rates
+      - name: atc_given_product_sessions
+        description: "Sessions that saw a product AND added to cart."
+        agg: sum
+        expr: case when f_product_event = 1 and f_cart_event = 1 then 1 else 0 end
+
+      - name: purchase_click_given_atc_sessions
+        description: "Sessions that added to cart AND clicked purchase."
+        agg: sum
+        expr: case when f_cart_event = 1 and f_purchase_event = 1 then 1 else 0 end
+
+      - name: actual_purchase_given_atc_sessions
+        description: "Sessions that added to cart AND had ≥ 1 realized order."
+        agg: sum
+        expr: case when f_cart_event = 1 and orders_count > 0 then 1 else 0 end
+
+# =========================
+# METRICS
+# =========================
+metrics:
+  # ---------- Additive totals ----------
+  - name: total_sessions
+    type: simple
+    label: Total Sessions
+    description: "Distinct session count."
+    type_params:
+      measure: sessions
+
+  - name: total_orders
+    type: simple
+    label: Total Orders
+    description: "Total realized orders mapped to sessions."
+    type_params:
+      measure: total_orders
+
+  - name: total_gmv
+    type: simple
+    label: Total GMV
+    description: "Sum of session-attributed GMV."
+    type_params:
+      measure: total_gmv
+
+  - name: converting_sessions
+    type: simple
+    label: Converting Sessions
+    description: "Sessions with ≥ 1 realized order."
+    type_params:
+      measure: converting_sessions
+
+  # ---------- Helper totals for step numerators/denominators ----------
+  - name: home_step_sessions_total
+    type: simple
+    label: Home Step Sessions
+    description: "Sessions that reached Home."
+    type_params:
+      measure: home_step_sessions
+
+  - name: department_step_sessions_total
+    type: simple
+    label: Department Step Sessions
+    description: "Sessions that reached a Department page."
+    type_params:
+      measure: department_step_sessions
+
+  - name: product_step_sessions_total
+    type: simple
+    label: Product Step Sessions
+    description: "Sessions that viewed a Product."
+    type_params:
+      measure: product_step_sessions
+
+  - name: cart_step_sessions_total
+    type: simple
+    label: Cart Step Sessions
+    description: "Sessions with Add-to-Cart."
+    type_params:
+      measure: cart_step_sessions
+
+  - name: purchase_click_sessions_total
+    type: simple
+    label: Purchase Click Sessions
+    description: "Sessions with a purchase click event."
+    type_params:
+      measure: purchase_click_sessions
+
+  - name: cancel_sessions_total
+    type: simple
+    label: Cancel Sessions
+    description: "Sessions with a cancel event."
+    type_params:
+      measure: cancel_sessions
+
+  - name: atc_given_product_sessions_total
+    type: simple
+    label: ATC Given Product Sessions
+    description: "Sessions that saw a product AND added to cart."
+    type_params:
+      measure: atc_given_product_sessions
+
+  - name: purchase_click_given_atc_sessions_total
+    type: simple
+    label: Purchase Click Given ATC Sessions
+    description: "Sessions that added to cart AND clicked purchase."
+    type_params:
+      measure: purchase_click_given_atc_sessions
+
+  - name: actual_purchase_given_atc_sessions_total
+    type: simple
+    label: Actual Purchase Given ATC Sessions
+    description: "ATC sessions with ≥ 1 realized order."
+    type_params:
+      measure: actual_purchase_given_atc_sessions
+
+  # ---------- Rates (derived from metrics, not measures) ----------
+  - name: conversion_rate
+    type: derived
+    label: Conversion Rate
+    description: "Converting sessions / Total sessions."
+    type_params:
+      expr: "converting_sessions / total_sessions"
+      metrics: [converting_sessions, total_sessions]
+
+  - name: aov
+    type: derived
+    label: Average Order Value (AOV)
+    description: "GMV / Orders."
+    type_params:
+      expr: "total_gmv / total_orders"
+      metrics: [total_gmv, total_orders]
+
+  - name: home_rate
+    type: derived
+    label: Home Step Reach Rate
+    description: "Sessions that reached Home / Total sessions."
+    type_params:
+      expr: "home_step_sessions_total / total_sessions"
+      metrics: [home_step_sessions_total, total_sessions]
+
+  - name: department_rate
+    type: derived
+    label: Department Step Reach Rate
+    description: "Sessions that reached a Department page / Total sessions."
+    type_params:
+      expr: "department_step_sessions_total / total_sessions"
+      metrics: [department_step_sessions_total, total_sessions]
+
+  - name: product_rate
+    type: derived
+    label: Product Step Reach Rate
+    description: "Sessions that viewed a Product / Total sessions."
+    type_params:
+      expr: "product_step_sessions_total / total_sessions"
+      metrics: [product_step_sessions_total, total_sessions]
+
+  - name: cart_rate
+    type: derived
+    label: Cart Step Reach Rate
+    description: "Sessions with Add-to-Cart / Total sessions."
+    type_params:
+      expr: "cart_step_sessions_total / total_sessions"
+      metrics: [cart_step_sessions_total, total_sessions]
+
+  - name: purchase_click_rate
+    type: derived
+    label: Purchase Click Step Rate
+    description: "Sessions with a purchase click event / Total sessions."
+    type_params:
+      expr: "purchase_click_sessions_total / total_sessions"
+      metrics: [purchase_click_sessions_total, total_sessions]
+
+  - name: cancel_rate
+    type: derived
+    label: Cancel Step Rate
+    description: "Sessions with a cancel event / Total sessions."
+    type_params:
+      expr: "cancel_sessions_total / total_sessions"
+      metrics: [cancel_sessions_total, total_sessions]
+
+  - name: atc_from_product_rate
+    type: derived
+    label: ATC from Product Rate
+    description: "ATC given Product = (sessions with Product and ATC) / (sessions with Product)."
+    type_params:
+      expr: "atc_given_product_sessions_total / product_step_sessions_total"
+      metrics: [atc_given_product_sessions_total, product_step_sessions_total]
+
+  - name: purchase_click_from_atc_rate
+    type: derived
+    label: Purchase Click from ATC Rate
+    description: "Purchase click given ATC = (sessions with ATC and Purchase Click) / (sessions with ATC)."
+    type_params:
+      expr: "purchase_click_given_atc_sessions_total / cart_step_sessions_total"
+      metrics: [purchase_click_given_atc_sessions_total, cart_step_sessions_total]
+
+  - name: purchase_actual_from_atc_rate
+    type: derived
+    label: Actual Purchase from ATC Rate
+    description: "Realized purchase given ATC = (ATC sessions with ≥ 1 realized order) / (ATC sessions)."
+    type_params:
+      expr: "actual_purchase_given_atc_sessions_total / cart_step_sessions_total"
+      metrics: [actual_purchase_given_atc_sessions_total, cart_step_sessions_total]
+
