@@ -8,6 +8,8 @@ package-lock.yml
 /look_dbt/profiles.yml
 /dist/
 /ingestion.egg-info/
+/look_dbt/target/
+/look_dbt/selectors.yml
 
 # Python/OS cruft (if present)
 __pycache__/

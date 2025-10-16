@@ -591,8 +591,6 @@ models:
               arguments:
                 min_value: 0
 
-version: 2
-
 # =========================
 # SEMANTIC MODELS
 # =========================
