@@ -1,244 +1,352 @@
 version: 2
 
 models:
-  # ======================
+
+  # =====================================================
   # CORE — ORDERS (unioned)
-  # ======================
+  # =====================================================
   - name: core_commerce_orders
-    description: "Unioned, source-aligned orders across systems. No joins or SCD logic."
+    description: >
+      Unioned, source-aligned orders across systems (Look, Shopify, etc.).
+      No joins or SCD logic. One row per source order.
+    meta:
+      owner: "core-data@yourco.com"
+      tier: silver
+      domain: "commerce"
     columns:
       - name: global_order_id
         description: "Global BK = source_system:order_id."
         tests: [not_null, unique]
+
       - name: source_system
+        description: "Source system identifier (e.g., look, shopify)."
         tests: [not_null]
+
       - name: order_id
         description: "Source business key."
         tests: [not_null]
+
       - name: user_id
         description: "Source user business key."
         tests: [not_null]
+
       - name: order_status
         description: "Source-normalized order status."
         tests:
           - accepted_values:
-              arguments:
-                values: ['Cancelled','Shipped','Complete','Returned','Processing']
+              values: ['Cancelled','Shipped','Complete','Returned','Processing']
+
       - name: order_date
-        description: "DATE(created_at) (or provided by int layer)."
-        tests: [not_null]
-      - name: created_at
-        tests: [not_null]
-      - name: canonical_updated_at
-        description: "Incremental watermark."
+        description: "DATE(created_at) or provided by int layer."
         tests: [not_null]
 
-  # ==========================
+      - name: created_at
+        description: "Order creation timestamp."
+        tests: [not_null]
+
+      - name: canonical_updated_at
+        description: "Incremental watermark for change capture."
+        tests: [not_null]
+
+  # =====================================================
   # CORE — ORDER ITEMS (unioned)
-  # ==========================
+  # =====================================================
   - name: core_commerce_order_items
-    description: "Unioned, source-aligned order items. No joins or derived metrics."
+    description: >
+      Unioned, source-aligned order items across all commerce systems.
+      Provides atomic sales rows for revenue and cost analysis.
+    meta:
+      owner: "core-data@yourco.com"
+      tier: silver
+      domain: "commerce"
     columns:
       - name: global_order_item_id
         description: "Global BK = source_system:order_item_id."
         tests: [not_null, unique]
+
       - name: source_system
+        description: "Source system identifier."
         tests: [not_null]
+
       - name: order_item_id
+        description: "Source item business key."
         tests: [not_null]
+
       - name: order_id
         description: "Header FK (source BK)."
-        tests: [not_null]
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('core_commerce_orders')
+                field: order_id
+                where: "order_id is not null"
+              config:
+                severity: warn
+
       - name: user_id
         description: "Source user BK (nullable in some sources)."
+
       - name: product_id
         description: "Source product BK."
         tests: [not_null]
+
       - name: inventory_item_id
         description: "Source inventory item BK (nullable)."
+
       - name: item_status
         description: "Source-normalized line status."
         tests:
           - accepted_values:
-              arguments:
-                values: ['Cancelled','Returned','Complete','Shipped','Processing']
+              values: ['Cancelled','Returned','Complete','Shipped','Processing']
+
       - name: item_date
-        description: "DATE(COALESCE(delivered_at, created_at)) provided by int layer."
+        description: "DATE(COALESCE(delivered_at, created_at))."
         tests: [not_null]
+
       - name: sale_price
         description: "Non-negative sales price (source value)."
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-                inclusive: true
+              min_value: 0
+              inclusive: true
+
       - name: canonical_updated_at
+        description: "Incremental watermark for change capture."
         tests: [not_null]
 
-  # ======================
+  # =====================================================
   # CORE — EVENTS (unioned)
-  # ======================
+  # =====================================================
   - name: core_commerce_events
-    description: "Unioned event stream across sources. No SCD logic."
+    description: >
+      Unioned event stream across multiple sources and channels.
+      Used for sessions, funnel, and attribution.
+    meta:
+      owner: "growth-analytics@yourco.com"
+      tier: silver
+      domain: "growth"
     columns:
       - name: global_event_id
         description: "Global BK = source_system:event_id."
         tests: [not_null, unique]
+
       - name: source_system
+        description: "Source system identifier."
         tests: [not_null]
+
       - name: event_id
+        description: "Source event business key."
         tests: [not_null]
+
       - name: user_id
         description: "Nullable for anonymous traffic."
+
       - name: event_ts
+        description: "Event timestamp (UTC)."
         tests: [not_null]
+
       - name: event_date
+        description: "Event calendar date (UTC)."
         tests: [not_null]
+
       - name: event_type
         description: "Normalized event type."
         tests:
           - accepted_values:
-              arguments:
-                values: ['cancel','purchase','product','cart','department','home']
+              values: ['cancel','purchase','product','cart','department','home']
+
       - name: traffic_source
         description: "Marketing source."
         tests:
           - accepted_values:
-              arguments:
-                values: ['Adwords','Organic','Email','Facebook','YouTube']
+              values: ['Adwords','Organic','Email','Facebook','YouTube']
+
       - name: browser
         description: "Browser family."
         tests:
           - accepted_values:
-              arguments:
-                values: ['Firefox','Other','IE','Safari','Chrome']
+              values: ['Firefox','Other','IE','Safari','Chrome']
+
       - name: canonical_updated_at
+        description: "Incremental watermark for change capture."
         tests: [not_null]
 
-  # ===============================
+  # =====================================================
   # CORE — INVENTORY ITEMS (unioned)
-  # ===============================
+  # =====================================================
   - name: core_commerce_inventory_items
-    description: "Unioned inventory units. No derived metrics."
+    description: >
+      Unioned inventory units across systems; no derived metrics.
+      Provides unit cost/retail for margin downstream.
+    meta:
+      owner: "supply-chain-data@yourco.com"
+      tier: silver
+      domain: "supply"
     columns:
       - name: global_inventory_item_id
         description: "Global BK = source_system:inventory_item_id."
         tests: [not_null, unique]
+
       - name: source_system
+        description: "Source system identifier."
         tests: [not_null]
+
       - name: inventory_item_id
+        description: "Source inventory item business key."
         tests: [not_null]
+
       - name: product_id
         description: "Source product BK."
         tests: [not_null]
+
       - name: distribution_center_id
         description: "Nullable source DC BK."
+
       - name: created_at
+        description: "Inventory unit creation timestamp."
         tests: [not_null]
+
       - name: created_date
+        description: "Inventory unit creation date."
         tests: [not_null]
+
       - name: unit_cost
         description: "Non-negative unit cost (source value)."
         tests:
           - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: true
+          # IMPORTANT: operator-leading form to avoid column-name duplication
+          - dbt_utils.expression_is_true:
               arguments:
-                min_value: 0
-                inclusive: true
+                expression: "<= retail_price OR retail_price is null"
+              config:
+                severity: warn
+                where: "unit_cost is not null"
+
       - name: retail_price
         description: "Non-negative retail price (source value)."
         tests:
           - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-                inclusive: true
+              min_value: 0
+              inclusive: true
+
       - name: canonical_updated_at
+        description: "Incremental watermark for change capture."
         tests: [not_null]
 
-  # ============================
+  # =====================================================
   # CORE — CUSTOMERS (SCD2, conformed)
-  # ============================
+  # =====================================================
   - name: core_commerce_users_scd
     description: "Conformed SCD2 customer dimension built by unioning per-source snapshots."
+    meta:
+      owner: "core-data@yourco.com"
+      tier: silver
+      domain: "identity"
     columns:
       - name: customer_sk
         description: "Surrogate key per version."
         tests: [not_null, unique]
+
       - name: global_customer_id
         description: "Global BK = source_system:user_id."
-        tests:
-          - not_null
+        tests: [not_null]
+
       - name: valid_from
+        description: "Row effective timestamp."
         tests: [not_null]
+
       - name: valid_to
+        description: "Row expiration timestamp."
         tests: [not_null]
+
       - name: is_current
+        description: "True if this is the current SCD row."
         tests:
           - accepted_values:
-              arguments:
-                values: [true, false]
+              values: [true, false]
+
     tests:
       - dbt_utils.unique_combination_of_columns:
-          arguments:
-            combination_of_columns: ['global_customer_id','valid_from']
+          combination_of_columns: ['global_customer_id','valid_from']
       - dbt_utils.expression_is_true:
-          arguments:
-            expression: "valid_from < valid_to"
+          expression: "valid_from < valid_to"
 
-  # ============================
+  # =====================================================
   # CORE — PRODUCTS (SCD2, conformed)
-  # ============================
+  # =====================================================
   - name: core_commerce_products_scd
     description: "Conformed SCD2 product dimension built by unioning per-source snapshots."
+    meta:
+      owner: "merch-data@yourco.com"
+      tier: silver
+      domain: "catalog"
     columns:
       - name: product_sk
+        description: "Surrogate key per version."
         tests: [not_null, unique]
+
       - name: global_product_id
         description: "Global BK = source_system:product_id."
-        tests:
-          - not_null
+        tests: [not_null]
+
       - name: valid_from
+        description: "Row effective timestamp."
         tests: [not_null]
+
       - name: valid_to
+        description: "Row expiration timestamp."
         tests: [not_null]
+
       - name: is_current
+        description: "True if this is the current SCD row."
         tests:
           - accepted_values:
-              arguments:
-                values: [true, false]
+              values: [true, false]
+
     tests:
       - dbt_utils.unique_combination_of_columns:
-          arguments:
-            combination_of_columns: ['global_product_id','valid_from']
+          combination_of_columns: ['global_product_id','valid_from']
       - dbt_utils.expression_is_true:
-          arguments:
-            expression: "valid_from < valid_to"
+          expression: "valid_from < valid_to"
 
-  # =============================================
+  # =====================================================
   # CORE — DISTRIBUTION CENTERS (SCD2, conformed)
-  # =============================================
+  # =====================================================
   - name: core_commerce_distribution_centers_scd
     description: "Conformed SCD2 distribution centers (only if DCs can change)."
+    meta:
+      owner: "supply-chain-data@yourco.com"
+      tier: silver
+      domain: "supply"
     columns:
       - name: dc_sk
+        description: "Surrogate key per version."
         tests: [not_null, unique]
+
       - name: global_dc_id
         description: "Global BK = source_system:distribution_center_id."
-        tests:
-          - not_null
+        tests: [not_null]
+
       - name: valid_from
+        description: "Row effective timestamp."
         tests: [not_null]
+
       - name: valid_to
+        description: "Row expiration timestamp."
         tests: [not_null]
+
       - name: is_current
+        description: "True if this is the current SCD row."
         tests:
           - accepted_values:
-              arguments:
-                values: [true, false]
+              values: [true, false]
+
     tests:
       - dbt_utils.unique_combination_of_columns:
-          arguments:
-            combination_of_columns: ['global_dc_id','valid_from']
+          combination_of_columns: ['global_dc_id','valid_from']
       - dbt_utils.expression_is_true:
-          arguments:
-            expression: "valid_from < valid_to"
+          expression: "valid_from < valid_to"

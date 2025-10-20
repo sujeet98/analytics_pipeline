@@ -1,6 +1,6 @@
 {{ config(
   materialized='incremental',
-  incremental_strategy='insert_overwrite',
+  incremental_strategy='merge',
   unique_key='event_id',
   schema='silver_dev',
   partition_by=['event_date'],

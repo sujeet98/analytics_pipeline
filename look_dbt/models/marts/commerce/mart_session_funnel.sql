@@ -1,9 +1,9 @@
 {{ config(
   materialized = 'incremental',
-  incremental_strategy = 'insert_overwrite',
+  incremental_strategy = 'merge',
+  unique_key = ['session_id'],
   partition_by = ['session_date'],
   on_schema_change = 'sync_all_columns',
-  file_format = 'delta'
 ) }}
 
 {% set lookback_days = var('funnel_lookback_days', 2) %}
@@ -101,31 +101,125 @@ cust_fallback as (
   from {{ ref('dim_customer_current') }}
 ),
 
--- 6) Orders near sessions (realized orders only; normalize status to lower)
-ord_source as (
+/* ============================================================================
+   REPLACED ATTRIBUTION LOGIC (v1.0 spec)
+   Goal: exactly ONE session per order using a tiered rule and requiring purchase intent.
+   Tier A: order timestamp inside session window → choose closest to session_end_ts (then latest start, then greatest id)
+   Tier B: if none, choose the latest session that ended within {{ attribution_hours }} hours BEFORE order timestamp
+   ============================================================================ */
+
+-- Sessions eligible to own an order (must have purchase intent and known customer)
+sess as (
   select
-    order_id,
-    customer_sk,
-    created_at,
-    lower(coalesce(order_status,'unknown')) as order_status_lc
-  from {{ ref('fact_orders_current') }}
-  where lower(coalesce(order_status,'unknown')) not in ('cancelled','void','failed','refunded','returned')
+    s.session_id,
+    s.customer_sk,
+    s.session_start_ts,
+    s.session_end_ts,
+    s.traffic_source,
+    f.f_purchase_event
+  from sessions s
+  left join funnel_flags f on f.session_id = s.session_id
+  where s.customer_sk is not null
+    and coalesce(f.f_purchase_event, 0) = 1
   {% if is_incremental() %}
-    and to_date(created_at) >= (select min_session_date_rebuild from cutoffs)
+    and to_date(s.session_start_ts) >= (select min_session_date_rebuild from cutoffs)
   {% endif %}
 ),
 
--- 7) Map ALL qualifying orders to sessions by customer & attribution window
+-- Qualifying orders (status filtered), using created_at as anchor time
+orders as (
+  select
+    o.order_id,
+    o.customer_sk,
+    cast(o.created_at as timestamp) as order_ts
+  from {{ ref('fact_orders_current') }} o
+  where lower(coalesce(o.order_status,'unknown')) not in ('cancelled','void','failed','refunded','returned')
+  {% if is_incremental() %}
+    and to_date(o.created_at) >= (select min_session_date_rebuild from cutoffs)
+  {% endif %}
+),
+
+-- Tier A: order time falls INSIDE session window
+tier_a as (
+  select
+    o.order_id,
+    s.session_id,
+    abs(unix_timestamp(o.order_ts) - unix_timestamp(s.session_end_ts)) as dist_to_end,
+    s.session_start_ts,
+    s.session_id as sid
+  from orders o
+  join sess s
+    on s.customer_sk = o.customer_sk
+   and s.session_start_ts <= o.order_ts
+   and o.order_ts       <= s.session_end_ts
+),
+
+pick_a as (
+  select order_id, session_id
+  from (
+    select
+      order_id,
+      session_id,
+      row_number() over (
+        partition by order_id
+        order by dist_to_end asc, session_start_ts desc, sid desc
+      ) as rn
+    from tier_a
+  ) x
+  where rn = 1
+),
+
+-- Tier B: if no in-window session, use the latest session that ended within {{ attribution_hours }}h BEFORE the order
+tier_b as (
+  select
+    o.order_id,
+    s.session_id,
+    s.session_end_ts,
+    s.session_id as sid
+  from orders o
+  join sess s
+    on s.customer_sk = o.customer_sk
+   and s.session_end_ts <  o.order_ts
+   and s.session_end_ts >= o.order_ts - interval {{ attribution_hours }} hours
+  left join pick_a a on a.order_id = o.order_id
+  where a.order_id is null
+),
+
+pick_b as (
+  select order_id, session_id
+  from (
+    select
+      order_id,
+      session_id,
+      row_number() over (
+        partition by order_id
+        order by session_end_ts desc, sid desc
+      ) as rn
+    from tier_b
+  ) x
+  where rn = 1
+),
+
+-- Final: one chosen session per order (or null if unattributed)
+order_to_session as (
+  select
+    o.order_id,
+    coalesce(a.session_id, b.session_id) as session_id
+  from orders o
+  left join pick_a a using (order_id)
+  left join pick_b b using (order_id)
+),
+
+-- Map each chosen order back to its session for per-session rollups
 sess_orders as (
   select
     s.session_id,
     o.order_id,
-    o.created_at as order_ts
-  from sessions s
-  join ord_source o
-    on o.customer_sk = s.customer_sk
-   and o.created_at >= s.session_start_ts
-   and o.created_at <= s.session_end_ts + interval {{ attribution_hours }} hours
+    o.order_ts
+  from order_to_session ots
+  join orders o      on o.order_id   = ots.order_id
+  left join sess s   on s.session_id = ots.session_id
+  where ots.session_id is not null
 ),
 
 -- 8) GMV at order grain
@@ -139,7 +233,7 @@ order_revenue as (
   group by o.order_id
 ),
 
--- 9) Collapse to session: count all orders and sum their GMV
+-- 9) Collapse to session: count attributed orders and sum their GMV
 orders_per_session as (
   select
     so.session_id,
@@ -170,7 +264,7 @@ select
   coalesce(f.f_purchase_event, 0)    as f_purchase_event,
   coalesce(f.f_cancel_event, 0)      as f_cancel_event,
 
-  -- orders & revenue per session
+  -- orders & revenue per session (now strictly single-attributed)
   coalesce(ops.orders_count, 0)      as orders_count,
   coalesce(ops.session_gmv, 0)       as session_gmv
 from sessions s

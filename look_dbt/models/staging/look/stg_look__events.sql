@@ -1,7 +1,7 @@
 {{ config(
     materialized='incremental',
-    incremental_strategy='insert_overwrite',
-    unique_key='id',                    
+    incremental_strategy='merge',
+    unique_key='event_id',                    
     partition_by=['event_date'],
     cluster_by=['user_id','session_id'], 
     tags=['staging','look']

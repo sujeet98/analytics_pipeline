@@ -1,81 +1,139 @@
 version: 2
 
 models:
+
+  # =====================================================
+  # STAGING: ORDERS (header)
+  # =====================================================
   - name: stg_look__orders
-    description: "Staging (deduped) orders from 'look' source; latest by ingest_ts_utc per order_id."
+    description: >
+      Staging (deduped) orders from the Look source. One row per order_id (latest by ingest_ts_utc).
+      Purpose: provide a clean, timely orders header for downstream conformance and marts.
+    meta:
+      owner: "core-data@yourco.com"
+      tier: bronze
+      domain: "commerce"
     columns:
       - name: order_id
-        description: "Natural key"
+        description: "Natural key of the order (source identifier)."
         tests: [not_null, unique]
+
       - name: user_id
-        description: "FK to users.id"
+        description: "FK to users.id (ordering user)."
         tests:
           - not_null
           - relationships:
               to: ref('stg_look__users')
               field: id
+
       - name: order_status
+        description: "Raw order status after staging normalization."
         tests:
           - accepted_values:
               values: ['Cancelled','Shipped','Complete','Returned','Processing']
+
       - name: created_at
-        tests: [not_null]
+        description: "Order creation timestamp in source timezone (as ingested)."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "<= current_timestamp() + interval 1 day"
+              severity: warn
+              config:
+                where: "created_at is not null"
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication/late arrivals."
         tests: [not_null]
 
+  # =====================================================
+  # STAGING: ORDER ITEMS (lines)
+  # =====================================================
   - name: stg_look__order_items
-    description: "Staging (deduped) order line items; latest by ingest_ts_utc per id."
+    description: >
+      Staging (deduped) order line items; one row per line item id (latest by ingest_ts_utc).
+      Purpose: expose atomic sales amounts and links to orders, users, products, and inventory units.
+    meta:
+      owner: "core-data@yourco.com"
+      tier: bronze
+      domain: "commerce"
     columns:
       - name: id
         description: "Natural key of the line item."
         tests: [not_null, unique]
+
       - name: order_id
-        description: "FK to orders.order_id"
+        description: "FK to stg_look__orders.order_id."
         tests:
           - not_null
           - relationships:
               to: ref('stg_look__orders')
               field: order_id
+
       - name: user_id
-        description: "FK to users.id (denormalized on the item row)."
+        description: "FK to users.id (denormalized on the item row). Nullable if order is guest/anonymous."
         tests:
           - relationships:
               to: ref('stg_look__users')
               field: id
-              where: "user_id is not null"     # allow anonymous or missing users if present
+              where: "user_id is not null"
+
       - name: product_id
-        description: "FK to products.product_id"
+        description: "FK to stg_look__products.product_id."
         tests:
           - not_null
           - relationships:
               to: ref('stg_look__products')
               field: product_id
+
       - name: inventory_item_id
-        description: "FK to inventory_items.id (unit-level)."
+        description: "FK to stg_look__inventory_items.id (unit-level). Often null for legacy rows."
         tests:
           - relationships:
               to: ref('stg_look__inventory_items')
               field: id
               where: "inventory_item_id is not null"
               severity: warn
+
       - name: item_status
+        description: "Raw item lifecycle status after staging normalization."
         tests:
           - accepted_values:
               values: ['Cancelled','Returned','Complete','Shipped','Processing']
+
       - name: sale_price
+        description: "Extended line amount (post-discount), in source currency."
         tests:
           - not_null
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100000
+              inclusive: true
+              severity: warn
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication."
         tests: [not_null]
 
+  # =====================================================
+  # STAGING: EVENTS (clickstream)
+  # =====================================================
   - name: stg_look__events
-    description: "Staging (deduped) web/app events; normalized event_type, traffic_source, browser."
+    description: >
+      Staging (deduped) web/app events. Event types, traffic_source, and browser normalized to a controlled vocabulary.
+      Purpose: provide clean sessions/funnel inputs and channel attribution signals.
+    meta:
+      owner: "growth-analytics@yourco.com"
+      tier: bronze
+      domain: "growth"
     columns:
       - name: event_id
+        description: "Unique event id after dedupe."
         tests: [not_null, unique]
+
       - name: user_id
         description: "FK to users.id; may be null for anonymous traffic."
         tests:
@@ -83,108 +141,200 @@ models:
               to: ref('stg_look__users')
               field: id
               where: "user_id is not null"
+
       - name: event_ts
-        tests: [not_null]
+        description: "Event timestamp (UTC)."
+        tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              expression: "<= current_timestamp() + interval 1 day"
+              severity: warn
+
       - name: event_type
+        description: "Normalized event type."
         tests:
           - accepted_values:
               values: ['cancel','purchase','product','cart','department','home']
+
       - name: traffic_source
+        description: "Normalized acquisition source at event time."
         tests:
           - accepted_values:
               values: ['Adwords','Organic','Email','Facebook','YouTube']
+
       - name: browser
+        description: "Normalized user agent family."
         tests:
           - accepted_values:
               values: ['Firefox','Other','IE','Safari','Chrome']
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication."
         tests: [not_null]
 
+  # =====================================================
+  # STAGING: INVENTORY ITEMS (units)
+  # =====================================================
   - name: stg_look__inventory_items
-    description: "Staging (deduped) inventory units with product attributes; latest per id."
+    description: >
+      Staging (deduped) inventory units. Includes product attributes at ingest and unit-level cost/retail.
+      Purpose: serve unit_cost at or near time of sale for margin calculations.
+    meta:
+      owner: "supply-chain-data@yourco.com"
+      tier: bronze
+      domain: "supply"
     columns:
       - name: id
+        description: "Inventory unit identifier (source natural key)."
         tests: [not_null, unique]
+
       - name: product_id
-        description: "FK to products.product_id"
+        description: "FK to stg_look__products.product_id."
         tests:
           - not_null
           - relationships:
               to: ref('stg_look__products')
               field: product_id
+
       - name: product_distribution_center_id
-        description: "FK to distribution_centers.distribution_center_id"
+        description: "FK to stg_look__distribution_centers.distribution_center_id (may be null)."
         tests:
           - relationships:
               to: ref('stg_look__distribution_centers')
               field: distribution_center_id
               where: "product_distribution_center_id is not null"
+
       - name: unit_cost
+        description: "Unit acquisition/landed cost (currency of record)."
         tests:
           - not_null
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+          - dbt_utils.expression_is_true:
+              expression: "<= retail_price OR retail_price is null"
+              severity: warn
+              config:
+                where: "unit_cost is not null"
+
       - name: retail_price
+        description: "List/retail price at ingest time."
         tests:
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for dedupe/late arrivals."
         tests: [not_null]
 
+  # =====================================================
+  # STAGING: USERS
+  # =====================================================
   - name: stg_look__users
-    description: "Staging (deduped) users with normalized gender/traffic_source."
+    description: >
+      Staging (deduped) users with basic normalization (gender, traffic_source).
+      Purpose: serve as user master for staging joins (orders, items, events).
+    meta:
+      owner: "core-data@yourco.com"
+      tier: bronze
+      domain: "identity"
     columns:
       - name: id
+        description: "User identifier from source."
         tests: [not_null, unique]
+
       - name: email
-        tests: []
+        description: "Email address (may be null for anonymous or partial sources)."
+
       - name: gender
+        description: "Normalized gender flag from source."
         tests:
           - accepted_values:
-              values: ['M','F']            # matches staging normalization
+              values: ['M','F']
+
       - name: traffic_source
+        description: "User-level acquisition channel at creation (staging vocabulary)."
         tests:
           - accepted_values:
-              values: ['Display','Organic','Search','Email','Facebook']  # matches staging normalization
+              values: ['Display','Organic','Search','Email','Facebook']
+
       - name: created_at
-        tests: [not_null]
-      - name: ingest_ts_utc
+        description: "User creation timestamp in source."
         tests: [not_null]
 
+      - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication."
+        tests: [not_null]
+
+  # =====================================================
+  # STAGING: PRODUCTS
+  # =====================================================
   - name: stg_look__products
-    description: "Staging (deduped) products; latest attributes per product_id."
+    description: >
+      Staging (deduped) products; latest attributes per product_id. Includes DC mapping and price attributes.
+      Purpose: authoritative product master in staging for joins to items/inventory.
+    meta:
+      owner: "merch-data@yourco.com"
+      tier: bronze
+      domain: "catalog"
     columns:
       - name: product_id
+        description: "Product identifier (source natural key)."
         tests: [not_null, unique]
+
       - name: distribution_center_id
-        description: "FK to distribution_centers.distribution_center_id"
+        description: "FK to stg_look__distribution_centers.distribution_center_id (nullable)."
         tests:
           - relationships:
               to: ref('stg_look__distribution_centers')
               field: distribution_center_id
               where: "distribution_center_id is not null"
+
       - name: unit_cost
+        description: "Current/ingested unit cost."
         tests:
           - not_null
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+          - dbt_utils.expression_is_true:
+              expression: "<= retail_price OR retail_price is null"
+              severity: warn
+              config:
+                where: "unit_cost is not null"
+
       - name: retail_price
+        description: "Current/ingested retail price."
         tests:
           - dbt_utils.accepted_range:
               min_value: 0
               inclusive: true
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication."
         tests: [not_null]
 
+  # =====================================================
+  # STAGING: DISTRIBUTION CENTERS
+  # =====================================================
   - name: stg_look__distribution_centers
-    description: "Staging (deduped) DCs."
+    description: >
+      Staging (deduped) distribution centers. One row per distribution_center_id.
+      Purpose: support DC joins for products and inventory units.
+    meta:
+      owner: "supply-chain-data@yourco.com"
+      tier: bronze
+      domain: "supply"
     columns:
       - name: distribution_center_id
+        description: "Distribution center identifier (source natural key)."
         tests: [not_null, unique]
+
       - name: name
+        description: "Human-readable DC name."
         tests: [not_null]
+
       - name: ingest_ts_utc
+        description: "Ingestion timestamp (UTC) used for deduplication."
         tests: [not_null]

@@ -1,0 +1,149 @@
+version: 2
+
+# -------------------------------------------
+# Global defaults (optional but handy)
+# -------------------------------------------
+edr_data_monitoring_settings:
+  defaults:
+    lookback_days: 30
+    owners:
+      - analytics@company.com
+    slack_channel: "#data-quality-alerts"
+
+# -------------------------------------------
+# Model-level monitors by layer
+# -------------------------------------------
+edr_model_monitors:
+
+  # ---------- STAGING ----------
+  - selector: "path:models/staging"
+    freshness:
+      time_bucket: hour
+      max_lag: "6 hours"
+    volume_anomalies:
+      sensitivity: medium
+    schema_changes:
+      enabled: true
+
+  # Tighter freshness for clickstream
+  - selector: "fqn:stg_look__events"
+    freshness:
+      time_bucket: hour
+      max_lag: "2 hours"
+    volume_anomalies:
+      sensitivity: high
+    schema_changes:
+      enabled: true
+
+  # ---------- INTERMEDIATE (CORE) ----------
+  - selector: "path:models/intermediate"
+    freshness:
+      time_bucket: hour
+      max_lag: "18 hours"
+    volume_anomalies:
+      sensitivity: medium
+    schema_changes:
+      enabled: true
+
+  # ---------- MARTS ----------
+  - selector: "path:models/marts"
+    # most marts are day-grain, so a daily SLA is fine
+    freshness:
+      time_bucket: day
+      max_lag: "2 days"
+    volume_anomalies:
+      sensitivity: medium
+    schema_changes:
+      enabled: true
+
+  # Funnel & profitability can be stricter
+  - selector: "fqn:mart_session_funnel OR fqn:mart_funnel_by_channel OR fqn:mart_channel_profitability"
+    freshness:
+      time_bucket: day
+      max_lag: "1 day"
+    volume_anomalies:
+      sensitivity: high
+    schema_changes:
+      enabled: true
+
+# -------------------------------------------
+# Column-level monitors (centralized)
+# Apply patterns to groups of models/columns
+# -------------------------------------------
+edr_column_monitors:
+
+  # ---------- STAGING hotspots ----------
+  - selector: "fqn:stg_look__order_items"
+    columns:
+      - column_name: sale_price
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: product_id
+        null_percent_anomalies: { sensitivity: high }
+      - column_name: inventory_item_id
+        null_percent_anomalies: { sensitivity: low }
+
+  - selector: "fqn:stg_look__events"
+    columns:
+      - column_name: event_type
+        values_anomalies: { sensitivity: high }
+      - column_name: traffic_source
+        values_anomalies: { sensitivity: high }
+
+  - selector: "fqn:stg_look__inventory_items OR fqn:stg_look__products"
+    columns:
+      - column_name: unit_cost
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: retail_price
+        distribution_anomalies: { sensitivity: medium }
+
+  # ---------- INTERMEDIATE (CORE) ----------
+  - selector: "fqn:core_commerce_order_items"
+    columns:
+      - column_name: sale_price
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: item_status
+        values_anomalies: { sensitivity: medium }
+
+  - selector: "fqn:core_commerce_events"
+    columns:
+      - column_name: event_type
+        values_anomalies: { sensitivity: high }
+      - column_name: traffic_source
+        values_anomalies: { sensitivity: high }
+      - column_name: browser
+        values_anomalies: { sensitivity: medium }
+
+  - selector: "fqn:core_commerce_inventory_items"
+    columns:
+      - column_name: unit_cost
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: retail_price
+        distribution_anomalies: { sensitivity: medium }
+
+  # ---------- MARTS ----------
+  - selector: "fqn:mart_session_funnel"
+    columns:
+      - column_name: orders_count
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: session_gmv
+        distribution_anomalies: { sensitivity: medium }
+
+  - selector: "fqn:mart_funnel_by_channel"
+    columns:
+      - column_name: sessions
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: gmv
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: conversion_rate
+        distribution_anomalies: { sensitivity: medium }
+      - column_name: aov
+        distribution_anomalies: { sensitivity: medium }
+
+  - selector: "fqn:mart_channel_profitability"
+    columns:
+      - column_name: contribution_margin
+        distribution_anomalies: { sensitivity: high }
+      - column_name: contribution_margin_per_1000_sessions
+        distribution_anomalies: { sensitivity: high }
+      - column_name: return_margin_hit
+        distribution_anomalies: { sensitivity: medium }

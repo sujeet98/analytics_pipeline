@@ -25,6 +25,16 @@ vars:
   bronze_schema: 'bronze_dev'
   silver_schema: 'silver_dev'
   gold_schema: 'gold_dev'
+  elementary:
+    account_name: "sujeet_data_analytics_workspace"
+    send_anonymous_usage_stats: false
+    default_monitors:
+      freshness:          { time_bucket: day, max_lag: "26 hours" }  # warn if a daily table is >26h late
+      volume_anomalies:   { sensitivity: medium }                    # row-count drift vs history
+      schema_changes:     { enabled: true, fail_on_drop: false }     # alert on add/drop/rename
+      tests_failures:     {}                                          # surface dbt test failures in Elementary
+      null_percent_anomalies: { sensitivity: medium }                 # flag spikes in nulls
+
 
 models:
   # Global guards

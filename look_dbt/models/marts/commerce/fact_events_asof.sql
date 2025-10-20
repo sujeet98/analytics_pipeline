@@ -1,6 +1,7 @@
 {{ config(
   materialized='incremental',
-  incremental_strategy='insert_overwrite',
+  incremental_strategy='merge',
+  unique_key='event_id',
   partition_by=['event_date'],
   cluster_by=['customer_sk'],
   tags=['marts','fact','asof']
