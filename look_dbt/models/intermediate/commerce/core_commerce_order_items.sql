@@ -5,7 +5,6 @@
   schema='silver_dev',
   partition_by=['created_date'],              
   cluster_by=['product_id','user_id','order_id'], 
-  on_schema_change='sync_all_columns',
   tags=['core','commerce','orders']
 ) }}
 

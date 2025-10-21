@@ -1,7 +1,6 @@
 {{ config(
     materialized = 'table',
     tags = ['mart','leak','growth'],
-    on_schema_change = 'sync_all_columns'
 ) }}
 
 {%- set LOOKBACK_DAYS = var('leak_lookback_days', 1000) -%}

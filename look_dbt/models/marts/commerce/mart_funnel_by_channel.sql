@@ -3,7 +3,6 @@
   incremental_strategy = 'merge',
   partition_by = ['session_date'],
   unique_key = ['session_date','traffic_source'],
-  on_schema_change = 'sync_all_columns',
 ) }}
 
 {% set lookback_days = var('funnel_lookback_days', 2) %}

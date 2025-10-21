@@ -38,7 +38,6 @@ vars:
 
 models:
   # Global guards
-  +on_schema_change: append_new_columns
   +persist_docs: { relation: true, columns: true }
 
   look_dbt:
@@ -49,7 +48,7 @@ models:
       +schema: '{{ var("silver_schema", "silver_dev") }}'
       +materialized: incremental
       +incremental_strategy: merge
-      +on_schema_change: sync_all_columns
+      +on_schema_change: append_new_columns
 
     # === INTERMEDIATE ===
     # Heavy joins and reused models → persist as TABLE by default.

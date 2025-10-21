@@ -2,7 +2,6 @@
   materialized='table',
   unique_key=['global_customer_id','valid_from'],
   schema='silver_dev',
-  on_schema_change='sync_all_columns',
   tags=['core','commerce','scd2']
 ) }}
 

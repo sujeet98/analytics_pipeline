@@ -4,7 +4,6 @@
   unique_key='order_id',
   schema='silver_dev',
   partition_by=['order_date'],      
-  on_schema_change='sync_all_columns',
   tags=['intermediate','commerce','look']
 ) }}
 

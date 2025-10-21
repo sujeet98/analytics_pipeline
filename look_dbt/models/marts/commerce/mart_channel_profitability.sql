@@ -3,7 +3,6 @@
   incremental_strategy = 'merge',
   unique_key = ['session_date','traffic_source'],
   partition_by = ['session_date'],
-  on_schema_change = 'sync_all_columns',
 ) }}
 
 -- Reuse your pipeline knobs
