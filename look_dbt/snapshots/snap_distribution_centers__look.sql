@@ -1,7 +1,6 @@
 {% snapshot snap_distribution_centers__look %}
 {{
   config(
-    target_schema = 'snapshots',
     unique_key    = 'distribution_center_id',
     strategy      = 'check',
     check_cols    = ['name_norm','lat_round','lon_round'],

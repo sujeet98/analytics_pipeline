@@ -1,7 +1,6 @@
 {% snapshot snap_users__look %}
 {{
   config(
-    target_schema = 'snapshots',
     unique_key    = 'user_id',
     strategy      = 'check',
     check_cols    = [

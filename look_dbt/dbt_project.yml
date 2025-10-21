@@ -1,7 +1,6 @@
 name: 'look_dbt'
 version: '1.1.0'
 config-version: 2
-
 profile: 'look_dbt'
 
 model-paths: ['models']
@@ -20,44 +19,48 @@ flags:
   require_explicit_package_overrides_for_builtin_materializations: false
   use_materialization_v2: true
 
+# ---------- Vars (NO Jinja here) ----------
 vars:
   catalog_name: 'sujeet_data_analytics_workspace'
-  bronze_schema: 'bronze_dev'
-  silver_schema: 'silver_dev'
-  gold_schema: 'gold_dev'
+  # Elementary defaults (dev). Override via --vars for prod.
   elementary:
-    account_name: "sujeet_data_analytics_workspace"
+    account_name: 'sujeet_data_analytics_workspace'
+    edr_database: 'sujeet_data_analytics_workspace'
+    edr_schema: 'edr'
     send_anonymous_usage_stats: false
     default_monitors:
-      freshness:          { time_bucket: day, max_lag: "26 hours" }  # warn if a daily table is >26h late
-      volume_anomalies:   { sensitivity: medium }                    # row-count drift vs history
-      schema_changes:     { enabled: true, fail_on_drop: false }     # alert on add/drop/rename
-      tests_failures:     {}                                          # surface dbt test failures in Elementary
-      null_percent_anomalies: { sensitivity: medium }                 # flag spikes in nulls
+      freshness:          { time_bucket: day, max_lag: "26 hours" }
+      volume_anomalies:   { sensitivity: medium }
+      schema_changes:     { enabled: true, fail_on_drop: false }
+      tests_failures:     {}
+      null_percent_anomalies: { sensitivity: medium }
 
+# ---------- Snapshots (Jinja allowed in config) ----------
+snapshots:
+  +database: 'sujeet_data_analytics_workspace'
+  +schema: "{{ 'snapshots_prod' if target.name == 'prod' else 'snapshots_dev' }}"
+  +persist_docs: { relation: true, columns: true }
+  +tags: ['snapshots']
 
+# ---------- Models ----------
 models:
-  # Global guards
   +persist_docs: { relation: true, columns: true }
 
-  look_dbt:
+  elementary:
+    +database: 'sujeet_data_analytics_workspace'
+    +schema:   "{{ 'edr_prod' if target.name == 'prod' else 'edr' }}"
 
-    # === STAGING (Silver) ===
-    # Staging does dedupes → persist with incremental MERGE by default.
+  look_dbt:
     staging:
-      +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +schema: "{{ 'silver_prod' if target.name == 'prod' else 'silver_dev' }}"
       +materialized: incremental
       +incremental_strategy: merge
       +on_schema_change: append_new_columns
 
-    # === INTERMEDIATE ===
-    # Heavy joins and reused models → persist as TABLE by default.
     intermediate:
-      +schema: '{{ var("silver_schema", "silver_dev") }}'
+      +schema: "{{ 'silver_prod' if target.name == 'prod' else 'silver_dev' }}"
       +materialized: table
 
-    # === MARTS (Gold) ===
-    # Tables by default; facts remain incremental in their model files (MERGE).
     marts:
-      +schema: '{{ var("gold_schema", "gold_dev") }}'
+      +schema: "{{ 'gold_prod' if target.name == 'prod' else 'gold_dev' }}"
       +materialized: table

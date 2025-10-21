@@ -1,26 +1,28 @@
 # The Look E-Commerce Analytics Project
 
-## 📘 Overview
+## Overview
 This project demonstrates how **data quality** and **actionable analytics** enable an organization to make informed, impactful decisions. Using a fictitious e-commerce company — **The Look** — we explore a complete data pipeline that ingests, transforms, and analyzes operational data to optimize business margins through insights.
 
 The Look aims to improve profitability by **understanding its current and historical performance** across areas such as user behavior, orders, inventory, and product management. This repository showcases best practices in **data engineering**, **data modeling**, and **data quality monitoring**.
 
 ---
 
-## 🧠 Purpose
-The goal is to simulate how organizations (or individuals) make data-informed decisions:
+## Purpose
+The goal is to simulate how organizations make data-informed decisions:
 - Gather **accurate, consistent, and complete data**.
 - Transform data into **actionable insights**.
 - Use dashboards to **interpret patterns and drive improvement**.
 
-This mirrors how individuals make choices using personal, medical, and scientific observations to improve their health — The Look uses data to improve its margins.
+The Look uses data to improve its margins.
 
 ---
 
-## 🏗️ Project Architecture
+## Project Architecture
 ### Data Source
 - **GCP BigQuery Dataset:** [The Look E-Commerce Public Dataset](https://console.cloud.google.com/marketplace/product/bigquery-public-data/thelook-ecommerce)
-- **Entities:** Distribution Centers, Events, Inventory Items, Orders, Products, Users
+- **Entities:** Distribution Centers, Events, Inventory Items, Orders, Order Items, Products, Users
+
+*ADD ERD HERE*
 
 ### Ingestion Pipeline
 #### 1. BigQuery → Raw Layer (AWS S3)
@@ -42,7 +44,7 @@ This mirrors how individuals make choices using personal, medical, and scientifi
 
 ---
 
-## 🧩 Data Transformation
+## Data Transformation
 ### Layers
 1. **Bronze:** Raw ingested data.
 2. **Silver:** Cleaned and conformed data using **dbt Core**.
@@ -51,20 +53,21 @@ This mirrors how individuals make choices using personal, medical, and scientifi
 ### dbt Model Strategy
 - **Staging (Silver):** Deduplication, normalization, and schema consistency.
 - **Intermediate (Silver):** Conformed data models with standardized business logic.
-- **Marts (Gold):** Dimensional and fact tables for analytics and dashboards.
+- **Marts (Gold):** Dimensional/fact tables and marts tables for speedy consumption for analytics and dashboards.
 
 ---
 
-## ⚙️ dbt Project Highlights
+## dbt Project Highlights
 - Incremental models with **MERGE upserts**
-- Schema evolution with `on_schema_change: sync_all_columns`
+- **dbt tests** covering referential integrity, nulls, unique IDs, acceptable ranges/values, business-specific logic
+- **Partitions and Clusters** used for efficient Spark file reads and queries
 - **SCD2 (Slowly Changing Dimensions)** for Users, Products, and Distribution Centers
 - **Elementary Monitoring** integration for data quality checks
 - **Semantic Layer** to ensure consistent business metrics
 
 ---
 
-## 📊 Dashboards and Reporting
+## Dashboards and Reporting
 Dashboards are built in **Databricks** on top of the Gold (marts) models, providing:
 - **Funnel Overview**
 - **Funnel Channel Drilldown**
@@ -72,11 +75,12 @@ Dashboards are built in **Databricks** on top of the Gold (marts) models, provid
 - **Channel Profitability**
 
 Each visual is **interpretable** and **action-oriented**:
-> Example: If Organic Traffic has a product_to_cart_vs_median of 0.75, that means Organic sessions have 25% fewer product-to-cart conversions than average, prompting actions like improving organic conversion paths or reallocating marketing spend.
+
+*DASHBOARD SNAPSHOTS: IN PROGRESS*
 
 ---
 
-## 📈 Data Quality Framework
+## Data Quality Framework
 Ensures that The Look’s data represents reality across six core dimensions:
 1. **Accuracy**
 2. **Completeness**
@@ -90,44 +94,16 @@ Good quality data must also be **understandable** and **actionable**, leading di
 
 ---
 
-## 🧠 Monitoring & Observability (Elementary)
+## Monitoring & Observability (Elementary)
 - **Freshness SLAs:** Layer-dependent (hours for staging, days for marts)
 - **Volume & Schema Drift Detection**
 - **Column-level Anomalies** (price, conversion rates, margins)
 - **Alerts via Slack (#data-quality-alerts)**
 
+*ELEMENTARY SNAPSHOTS: IN PROGRESS*
 ---
 
-## 🧱 Project Structure
-```
-the-look-analytics/
-│
-├── ingestion/
-│   ├── ingest_bigquery_to_raw.py
-│   └── raw_to_bronze_autoloader.py
-│
-├── dbt/
-│   ├── models/
-│   │   ├── staging/
-│   │   ├── intermediate/
-│   │   └── marts/
-│   ├── seeds/
-│   ├── macros/
-│   ├── snapshots/
-│   └── tests/
-│
-├── dashboards/
-│   ├── funnel_overview.dbx
-│   ├── funnel_by_channel.dbx
-│   └── channel_profitability.dbx
-│
-└── monitoring/
-    └── elementary.yml
-```
-
----
-
-## 🧭 Summary
+## Summary
 This project exemplifies **modern data stack practices** for an analytics-driven organization:
 - Incremental ingestion (BigQuery → S3)
 - Auto Loader for exactly-once ingestion
@@ -139,6 +115,8 @@ This project exemplifies **modern data stack practices** for an analytics-driven
 It serves as a **portfolio-ready template** for showcasing **data engineering**, **dbt modeling**, and **data quality monitoring** skills in Databricks.
 
 ---
+
+*AIRFLOW ORCHESTRATION SECTION: IN PROGRESS*
 
 ## 🏁 Run Instructions
 ```bash
@@ -155,12 +133,7 @@ dbt run -s staging+ intermediate+ marts
 dbt test
 dbt docs generate && dbt docs serve
 ```
-
----
-
-## 📬 Contact
-For questions or contributions, reach out at:
-📧 analytics@thelook.io
+*ADD ELEMENTARY AND AIRFLOW STEPS HERE*
 
 ---
 

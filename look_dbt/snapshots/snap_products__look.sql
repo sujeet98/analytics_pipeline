@@ -1,7 +1,6 @@
 {% snapshot snap_products__look %}
 {{
   config(
-    target_schema = 'snapshots',
     unique_key    = 'product_id',
     strategy      = 'check',
     check_cols    = [
