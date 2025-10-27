@@ -104,8 +104,13 @@ Dashboards are built in **Databricks** on top of the Gold (marts) models, provid
 - **Freshness SLAs:** Layer-dependent (hours for staging, days for marts)
 - **Volume & Schema Drift Detection**
 - **Column-level Anomalies** (price, conversion rates, margins)
-- **Alerts via Slack (#data-quality-alerts)**
-- ELEMENTARY SNAPSHOTS: IN PROGRESS
+
+**Elementary Dashboard - Data Health**
+![Elementary Dashboard](./images/Elementary1.png)
+
+**Elementary Table Linage**
+![Elementary Lineage](./images/Elementary2.png)
+
 ---
 
 ## Summary
