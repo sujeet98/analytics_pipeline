@@ -22,7 +22,7 @@ The Look uses data to improve its margins.
 - **GCP BigQuery Dataset:** [The Look E-Commerce Public Dataset](https://console.cloud.google.com/marketplace/product/bigquery-public-data/thelook-ecommerce)
 - **Entities:** Distribution Centers, Events, Inventory Items, Orders, Order Items, Products, Users
 
-*ADD ERD HERE*
+![ERD](./images/ERD.png)
 
 ### Ingestion Pipeline
 #### 1. BigQuery → Raw Layer (AWS S3)
@@ -70,13 +70,13 @@ The Look uses data to improve its margins.
 ## Dashboards and Reporting
 Dashboards are built in **Databricks** on top of the Gold (marts) models, providing:
 - **Funnel Overview**
-- **Funnel Channel Drilldown**
+- **Funnel Channel Drilldown & Profitability**
 - **Funnel Leaks**
-- **Channel Profitability**
 
-Each visual is **interpretable** and **action-oriented**:
-
-*DASHBOARD SNAPSHOTS: IN PROGRESS*
+![Funnel Overview 1](./images/FunnelOverview1.png)
+![Funnel Overview 2](./images/FunnelOverview2.png)
+![Funnel Channel](./images/FunnelChannel.png)
+![Funnel Leaks](./images/FunnelLeaks.png)
 
 ---
 
@@ -99,8 +99,7 @@ Good quality data must also be **understandable** and **actionable**, leading di
 - **Volume & Schema Drift Detection**
 - **Column-level Anomalies** (price, conversion rates, margins)
 - **Alerts via Slack (#data-quality-alerts)**
-
-*ELEMENTARY SNAPSHOTS: IN PROGRESS*
+- ELEMENTARY SNAPSHOTS: IN PROGRESS
 ---
 
 ## Summary
