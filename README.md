@@ -57,29 +57,6 @@ The Look uses data to improve its margins.
 
 ---
 
-## dbt Project Highlights
-- Incremental models with **MERGE upserts**
-- **dbt tests** covering referential integrity, nulls, unique IDs, acceptable ranges/values, business-specific logic
-- **Partitions and Clusters** used for efficient Spark file reads and queries
-- **SCD2 (Slowly Changing Dimensions)** for Users, Products, and Distribution Centers
-- **Elementary Monitoring** integration for data quality checks
-- **Semantic Layer** to ensure consistent business metrics
-
----
-
-## Dashboards and Reporting
-Dashboards are built in **Databricks** on top of the Gold (marts) models, providing:
-- **Funnel Overview**
-- **Funnel Channel Drilldown & Profitability**
-- **Funnel Leaks**
-
-![Funnel Overview 1](./images/FunnelOverview1.png)
-![Funnel Overview 2](./images/FunnelOverview2.png)
-![Funnel Channel](./images/FunnelChannel.png)
-![Funnel Leaks](./images/FunnelLeaks.png)
-
----
-
 ## Data Quality Framework
 Ensures that The Look’s data represents reality across six core dimensions:
 1. **Accuracy**
@@ -93,6 +70,35 @@ Ensures that The Look’s data represents reality across six core dimensions:
 Good quality data must also be **understandable** and **actionable**, leading directly to business improvements.
 
 ---
+
+## dbt Project Highlights
+- Incremental models with **MERGE upserts**
+- **dbt tests** covering referential integrity, nulls, unique IDs, acceptable ranges/values, business-specific logic
+- **Partitions and Clusters** used for efficient Spark file reads and queries
+- **SCD2 (Slowly Changing Dimensions)** for Users, Products, and Distribution Centers
+- **Elementary Monitoring** integration for data quality checks
+- **Semantic Layer** to ensure consistent business metrics
+
+---
+
+## Dashboards and Reporting
+Dashboards are built in **Databricks** on top of the Gold (marts) models, providing analysis of user web events and their attribution to orders:
+- **Funnel Overview**
+- **Funnel Channel Drilldown & Profitability**
+- **Funnel Leaks**
+
+**Funnel Overview**
+![Funnel Overview 1](./images/FunnelOverview1.png)
+![Funnel Overview 2](./images/FunnelOverview2.png)
+
+**Funnel Channel & Profitability Drilldown**
+![Funnel Channel](./images/FunnelChannel.png)
+
+**Funnel Leaks Analysis**
+![Funnel Leaks](./images/FunnelLeaks.png)
+
+**Direct analysis of orders/order items (non session-related) to be completed later**
+
 
 ## Monitoring & Observability (Elementary)
 - **Freshness SLAs:** Layer-dependent (hours for staging, days for marts)
