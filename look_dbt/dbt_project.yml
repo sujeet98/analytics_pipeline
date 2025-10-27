@@ -19,7 +19,7 @@ flags:
   require_explicit_package_overrides_for_builtin_materializations: false
   use_materialization_v2: true
 
-# ---------- Vars (NO Jinja here) ----------
+# ---------- Vars ----------
 vars:
   catalog_name: 'sujeet_data_analytics_workspace'
   # Elementary defaults (dev). Override via --vars for prod.
@@ -35,7 +35,7 @@ vars:
       tests_failures:     {}
       null_percent_anomalies: { sensitivity: medium }
 
-# ---------- Snapshots (Jinja allowed in config) ----------
+# ---------- Snapshots ----------
 snapshots:
   +database: 'sujeet_data_analytics_workspace'
   +schema: "{{ 'snapshots_prod' if target.name == 'prod' else 'snapshots_dev' }}"

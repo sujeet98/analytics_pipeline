@@ -2,7 +2,6 @@
   materialized='incremental',
   incremental_strategy='merge',
   unique_key=['global_order_item_id'],
-  schema='silver_dev',
   partition_by=['created_date'],              
   cluster_by=['product_id','user_id','order_id'], 
   tags=['core','commerce','orders']

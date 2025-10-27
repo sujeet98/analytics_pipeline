@@ -1,7 +1,6 @@
 {{ config(
   materialized='table',
   unique_key=['global_dc_id','valid_from'],
-  schema='silver_dev',
   tags=['core','commerce','scd2','distribution_centers']
 ) }}
 

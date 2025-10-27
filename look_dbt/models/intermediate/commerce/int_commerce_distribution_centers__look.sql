@@ -1,8 +1,7 @@
 {{ config(
   materialized='incremental',
   incremental_strategy='merge',
-  unique_key='distribution_center_id',
-  schema='silver_dev',        
+  unique_key='distribution_center_id',      
   tags=['intermediate','commerce','look']
 ) }}
 

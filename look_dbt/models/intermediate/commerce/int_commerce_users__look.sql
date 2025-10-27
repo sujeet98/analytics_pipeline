@@ -2,7 +2,6 @@
   materialized='incremental',
   incremental_strategy='merge',
   unique_key='user_id',
-  schema='silver_dev',
   tags=['intermediate','commerce','look']
 ) }}
 

@@ -2,7 +2,6 @@
   materialized='incremental',
   incremental_strategy='merge',
   unique_key=['global_event_id'],          
-  schema='silver_dev',
   partition_by=['event_date'],
   cluster_by=['user_id','session_id'],    
   tags=['core','commerce','events']
