@@ -112,7 +112,7 @@ Dashboards are built in **Databricks** on top of the Gold (marts) models, provid
 ![Elementary Lineage](./images/Elementary2.png)
 
 ## Airflow Orchestration
-Used Docker compose to locally spin up Airflow and execute a DAG with 3 Databricks Jobs tasks: 
+Used Docker compose to locally spin up Airflow and execute a DAG with 3 Databricks Jobs tasks: `/airflow-dbx/dags/databricks_pipeline_dag.py`
 1. Ingest data from GCP BQ and append it to our s3 raw layer.
 2. Autoload newly added data in the raw layer to our Bronze layer as Delta tables.
 3. Run our dbt project (dbt deps, seed, run, test) 

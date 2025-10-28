@@ -685,3 +685,31 @@
 [2025-10-28T18:23:53.733+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:23:53.733+0000] {dag.py:3089} INFO - Sync 1 DAGs
 [2025-10-28T18:23:53.739+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:23:53.739+0000] {dag.py:3947} INFO - Setting next_dagrun for databricks_end_to_end_portfolio to None, run_after=None
 [2025-10-28T18:23:53.748+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/databricks_pipeline_dag.py took 0.048 seconds
+[2025-10-28T18:24:23.995+0000] {processor.py:161} INFO - Started process (PID=170) to work on /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:23.996+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/databricks_pipeline_dag.py for tasks to queue
+[2025-10-28T18:24:23.998+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:23.998+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:24.006+0000] {processor.py:840} INFO - DAG(s) 'databricks_end_to_end_portfolio' retrieved from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:24.026+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:24.026+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2025-10-28T18:24:24.033+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:24.033+0000] {dag.py:3947} INFO - Setting next_dagrun for databricks_end_to_end_portfolio to None, run_after=None
+[2025-10-28T18:24:24.040+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/databricks_pipeline_dag.py took 0.050 seconds
+[2025-10-28T18:24:54.296+0000] {processor.py:161} INFO - Started process (PID=171) to work on /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:54.297+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/databricks_pipeline_dag.py for tasks to queue
+[2025-10-28T18:24:54.298+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:54.298+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:54.306+0000] {processor.py:840} INFO - DAG(s) 'databricks_end_to_end_portfolio' retrieved from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:24:54.325+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:54.325+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2025-10-28T18:24:54.331+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:24:54.331+0000] {dag.py:3947} INFO - Setting next_dagrun for databricks_end_to_end_portfolio to None, run_after=None
+[2025-10-28T18:24:54.339+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/databricks_pipeline_dag.py took 0.050 seconds
+[2025-10-28T18:25:24.586+0000] {processor.py:161} INFO - Started process (PID=172) to work on /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:24.587+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/databricks_pipeline_dag.py for tasks to queue
+[2025-10-28T18:25:24.589+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:24.589+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:24.604+0000] {processor.py:840} INFO - DAG(s) 'databricks_end_to_end_portfolio' retrieved from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:24.627+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:24.627+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2025-10-28T18:25:24.636+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:24.636+0000] {dag.py:3947} INFO - Setting next_dagrun for databricks_end_to_end_portfolio to None, run_after=None
+[2025-10-28T18:25:24.644+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/databricks_pipeline_dag.py took 0.069 seconds
+[2025-10-28T18:25:54.874+0000] {processor.py:161} INFO - Started process (PID=173) to work on /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:54.875+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/databricks_pipeline_dag.py for tasks to queue
+[2025-10-28T18:25:54.876+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:54.876+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:54.887+0000] {processor.py:840} INFO - DAG(s) 'databricks_end_to_end_portfolio' retrieved from /opt/airflow/dags/databricks_pipeline_dag.py
+[2025-10-28T18:25:54.915+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:54.914+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2025-10-28T18:25:54.923+0000] {logging_mixin.py:188} INFO - [2025-10-28T18:25:54.923+0000] {dag.py:3947} INFO - Setting next_dagrun for databricks_end_to_end_portfolio to None, run_after=None
+[2025-10-28T18:25:54.932+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/databricks_pipeline_dag.py took 0.063 seconds
