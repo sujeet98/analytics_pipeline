@@ -20,3 +20,4 @@ __pycache__/
 *.env
 *.dbt_env
 venv/
+/airflow/.env
