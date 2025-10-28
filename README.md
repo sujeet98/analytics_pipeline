@@ -26,7 +26,7 @@ The Look uses data to improve its margins.
 
 ### Ingestion Pipeline
 #### 1. BigQuery → Raw Layer (AWS S3)
-- **Script:** `ingest_bigquery_to_raw.py`
+- **Script:** `/ingestion/thelook_ingest/ingest_bigquery_to_raw.py`
 - **Engine:** Databricks Job running PySpark on a Spark Cluster
 - **Features:**
   - Incremental ingestion with **high-watermark cursors**
@@ -35,7 +35,7 @@ The Look uses data to improve its margins.
   - Schema-stable and backfill-aware
 
 #### 2. Raw Layer → Bronze Layer (Databricks Auto Loader)
-- **Script:** `raw_to_bronze_autoloader.py`
+- **Script:** `/ingestion/thelook_ingest/raw_to_bronze_autoloader.py`
 - **Features:**
   - Exactly-once ingestion with checkpointing
   - Automatic schema evolution
@@ -51,9 +51,9 @@ The Look uses data to improve its margins.
 3. **Gold:** Business-ready, analytics-optimized data marts.
 
 ### dbt Model Strategy
-- **Staging (Silver):** Deduplication, normalization, and schema consistency.
-- **Intermediate (Silver):** Conformed data models with standardized business logic.
-- **Marts (Gold):** Dimensional/fact tables and marts tables for speedy consumption for analytics and dashboards.
+- **Staging (Silver):** Deduplication, normalization, and schema consistency. `/look_dbt/models/staging`
+- **Intermediate (Silver):** Conformed data models with standardized business logic. `/look_dbt/models/intermediate`
+- **Marts (Gold):** Dimensional/fact tables and marts tables for speedy consumption for analytics and dashboards. `/look_dbt/models/marts`
 
 ---
 
