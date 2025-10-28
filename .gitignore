@@ -26,3 +26,4 @@ venv/
 /airflow/dags/__pycache__
 /ingestion/thelook_ingest/.env
 /ingestion/thelook_ingest/.dbt_env
+.env
