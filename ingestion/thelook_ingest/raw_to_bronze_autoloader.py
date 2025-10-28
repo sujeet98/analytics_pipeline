@@ -3,11 +3,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # PURPOSE
 # ──────────────────────────────────────────────────────────────────────────────
-# Promote immutable RAW Parquet files (written by your BQ→RAW job) into
+# Promote immutable RAW Parquet files (written by the BQ→RAW job) into
 # Unity Catalog Delta tables in the bronze schema using Databricks Auto Loader.
 #
 # This script:
-#   • Reads from a UC *Volume* path (so it works on Serverless without NAT/IAM).
+#   • Reads from a UC *Volume* path
 #   • Uses Auto Loader ("cloudFiles") with exactly-once semantics via checkpoints.
 #   • Runs one table at a time with trigger(availableNow=True) (batch-like).
 #   • On first run for a table → includeExistingFiles=true (backfill).
@@ -25,11 +25,9 @@
 #   • Auto Loader schema & checkpoints are stored under the same Volume:
 #       /Volumes/.../raw_thelook_files/_autoloader/_schemas/bronze/<table>
 #       /Volumes/.../raw_thelook_files/_autoloader/_checkpoints/bronze/<table>
-#     (Keeping metadata alongside the source keeps Serverless happy.)
 #
 # RUN MODE
-#   • Schedule this as a Databricks Job. Small Serverless SQL Warehouse or
-#     small Serverless All-Purpose compute both work; start tiny for costs.
+#   • Schedule this as a Databricks Job.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import os
@@ -40,12 +38,12 @@ from pyspark.sql import functions as F
 from pyspark.dbutils import DBUtils
 
 # ------------------------------------------------------------------------------
-# 0) CONFIG — tweak safely (or set via environment variables in your Job)
+# 0) CONFIG
 # ------------------------------------------------------------------------------
 CATALOG       = os.getenv("UC_CATALOG", "sujeet_data_analytics_workspace")
 BRONZE_SCHEMA = os.getenv("BRONZE_SCHEMA", "bronze_dev")
 
-# Your RAW Volume (already created)
+# RAW Volume
 RAW_VOLUME = os.getenv(
     "RAW_VOLUME_PATH",
     "/Volumes/sujeet_data_analytics_workspace/raw/raw_thelook_files"
@@ -130,7 +128,6 @@ def run_one_table(table: str):
     print(f"Checkpoint   : {checkpoint}")
     print(f"Target table : {target_tbl}")
 
-    # First run heuristic:
     #   If there is no checkpoint dir yet, we backfill existing files.
     include_existing = "true" if not path_exists(checkpoint) else "false"
 

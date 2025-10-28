@@ -1,4 +1,3 @@
-# ingestion/thelook_ingest/config.py
 """
 Centralized configuration & helpers for the ingestion job.
 

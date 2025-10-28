@@ -6,11 +6,7 @@
 # Pull data incrementally from BigQuery public dataset
 #   bigquery-public-data.thelook_ecommerce
 # and write **append-only Parquet files** into a Unity Catalog **External Volume**
-# that maps to s3://.../raw/thelook (your RAW landing zone).
-#
-# Why a Volume? It gives Serverless secure, direct access to S3 without you
-# managing VPC/NAT/instance profiles. Partners can keep dropping files into
-# s3://.../raw/thelook, while *you* read & write through /Volumes/... in jobs.
+# that maps to s3://.../raw/thelook (RAW landing zone).
 #
 # Files are partitioned as:
 #   {RAW_VOLUME}/{table}/ingest_date=YYYY-MM-DD/run_ts=HHMMSS/part-*.snappy.parquet
@@ -25,13 +21,15 @@
 #   2) External Volume  'raw_thelook_files' (in catalog.schema = sujeet_data_analytics_workspace.raw)
 #      Volume path: /Volumes/sujeet_data_analytics_workspace/raw/raw_thelook_files
 #   3) Grants: READ FILES/WRITE FILES on that Volume for the job principal
-#   4) Spark BigQuery connector available (DBR 12+ with built-in connector)
+#   4) Spark BigQuery connector available
 #
 # Tips:
 #   • First run will backfill (from epoch) using a grace window to catch late rows.
 #   • Next runs advance a high-watermark cursor and only fetch deltas.
-#   • Nothing here creates UC tables; these are just files for your RAW zone.
-#     Your Auto Loader job will read from the same Volume path into Bronze tables.
+#   • Auto Loader job will read from the same Volume path into Bronze tables.
+# 
+# RUN MODE
+#   • Schedule this as a Databricks Job.
 # ──────────────────────────────────────────────────────────────────────────────
 
 import os, datetime, json, uuid
@@ -41,8 +39,6 @@ from pyspark.sql import DataFrame
 from pyspark.sql import SparkSession
 from pyspark.dbutils import DBUtils
 
-# If you prefer env vars instead of a config helper, you can swap out these imports.
-# In your repo you already have a config module; we’ll keep using it:
 from ingestion.thelook_ingest.config import (
     get_project,            # returns GCP project for BQ billing
     get_bq_auth_options,    # returns dict of Spark BigQuery connector auth options
@@ -53,21 +49,20 @@ from ingestion.thelook_ingest.config import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Where we will WRITE the RAW Parquet files and READ/WRITE cursor JSON.
-# You created this Volume already and it points at s3://.../raw/thelook
 RAW_VOLUME = os.getenv(
     "RAW_VOLUME_PATH",
     "/Volumes/sujeet_data_analytics_workspace/raw/raw_thelook_files"
-).rstrip("/")  # keep tidy (avoid trailing slash duplication)
+).rstrip("/")
 
 # BigQuery billing project & connector auth
 PROJECT_ID = get_project()
-BQ_AUTH    = get_bq_auth_options()   # e.g., {"credentials": "..."} or {"gcsBucket": "..."} etc.
+BQ_AUTH    = get_bq_auth_options() 
 
 # Run metadata (UTC so partitions are stable irrespective of cluster TZ)
 TODAY  = datetime.date.today().isoformat()                               # "YYYY-MM-DD"
 RUN_TS = datetime.datetime.now(datetime.timezone.utc).strftime("%H%M%S") # "HHMMSS"
 
-# Cursor/state lives inside the same RAW volume, under a hidden-ish folder
+# Cursor/state lives inside the same RAW volume
 STATE_PREFIX = f"{RAW_VOLUME}/_state"
 
 # Output file sizing: coalesce reduces the # of small files (tune if needed)
@@ -119,7 +114,7 @@ def _state_path(table: str) -> str:
     return f"{STATE_PREFIX}/{table}.json"
 
 def _bq_table_id(table: str) -> str:
-    """BigQuery identifier that the Spark connector understands (table path; no SQL)."""
+    """BigQuery identifier that the Spark connector understands."""
     return f"bigquery-public-data.thelook_ecommerce.{table}"
 
 # ── State I/O (cursor + cadence markers) ──────────────────────────────────────
@@ -164,7 +159,7 @@ def _is_due(table: str, cadence_minutes: int) -> bool:
     return (_now_utc() - last).total_seconds() >= cadence_minutes * 60
 
 def save_cursor(table: str, cursor_str: str, rows: int) -> None:
-    """Persist the new cursor + lightweight metadata (atomic write via tmp + mv)."""
+    """Persist the new cursor + lightweight metadata."""
     dbutils = DBUtils(spark)
     now_iso = _now_utc().isoformat(timespec="seconds")
     payload = {
@@ -427,6 +422,6 @@ def main():
 
     print("\nSummary:", results)
 
-# Allow `spark-submit` or Databricks job “Python script” entrypoint
+# Allow Databricks job “Python script” entrypoint
 if __name__ == "__main__":
     main()
